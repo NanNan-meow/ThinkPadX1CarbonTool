@@ -63,9 +63,8 @@ namespace CarbonControl
         {
             try
             {
-                string dll = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hardware", "LibreHardwareMonitorLib.dll");
-                if (!File.Exists(dll)) { status = "点击「配置硬件组件」连接温度与功耗传感器"; return; }
-                var a = Assembly.LoadFrom(dll);
+                if (!HardwareComponents.IsInstalled) { status = "点击「配置硬件组件」连接温度与功耗传感器"; return; }
+                var a = HardwareComponents.LoadLibrary();
                 computer = Activator.CreateInstance(a.GetType("LibreHardwareMonitor.Hardware.Computer", true));
                 Set(computer, "IsCpuEnabled", true); Set(computer, "IsGpuEnabled", true);
                 Call(computer, "Open"); status = "传感器已连接";
@@ -120,15 +119,15 @@ namespace CarbonControl
         private SafeFileHandle handle;
         public PawnPort()
         {
+            // Validate components before opening the driver or attempting a CLR bind.
+            var assembly = HardwareComponents.LoadLibrary();
             handle = CreateFile(@"\\?\GLOBALROOT\Device\PawnIO", 3, 3, IntPtr.Zero, 3, 128, IntPtr.Zero);
             if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "请先配置硬件组件并切换到管理员模式"); }
             try
             {
-                string dll = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hardware", "LibreHardwareMonitorLib.dll");
-                var a = Assembly.LoadFrom(dll);
-                string resource = a.GetManifestResourceNames().Single(n => n.EndsWith("LpcACPIEC.bin", StringComparison.OrdinalIgnoreCase));
+                string resource = assembly.GetManifestResourceNames().Single(n => n.EndsWith("LpcACPIEC.bin", StringComparison.OrdinalIgnoreCase));
                 byte[] module;
-                using (var s = a.GetManifestResourceStream(resource)) using (var m = new MemoryStream()) { s.CopyTo(m); module = m.ToArray(); }
+                using (var s = assembly.GetManifestResourceStream(resource)) using (var m = new MemoryStream()) { s.CopyTo(m); module = m.ToArray(); }
                 Io(0xA1B22084u, module, 0);
             }
             catch { handle.Dispose(); throw; }

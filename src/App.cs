@@ -35,13 +35,15 @@ namespace CarbonControl
             if (args.Length == 3 && args[0] == "--watchdog") { Watchdog.Run(int.Parse(args[1]), args[2]); return 0; }
             if (args.Length > 0 && args[0] == "--self-test") return Tests.Run(args.Length > 1 ? args[1] : "test-results.txt");
             if (args.Length == 2 && args[0] == "--diagnose") return Diagnostics.Write(args[1]);
+            if (args.Length == 2 && args[0] == "--check-components") return Diagnostics.CheckComponents(args[1]);
             if (args.Length == 2 && args[0] == "--ui-test")
             {
                 try { var testApp = new Application(); using (var testUi = new MainUi(true)) testUi.TestUi(args[1]); return 0; }
                 catch (Exception ex) { File.WriteAllText(args[1], ex.ToString(), Encoding.UTF8); return 1; }
             }
-            if (args.Length == 2 && args[0] == "--wait-parent")
-            { try { using (var parent = Process.GetProcessById(int.Parse(args[1]))) parent.WaitForExit(15000); } catch (ArgumentException) { } }
+            int parentArgument = Array.IndexOf(args, "--wait-parent");
+            if (parentArgument >= 0 && parentArgument + 1 < args.Length)
+            { try { using (var parent = Process.GetProcessById(int.Parse(args[parentArgument + 1]))) parent.WaitForExit(15000); } catch (ArgumentException) { } }
             if (args.Length > 1 && args[0] == "--render-preview")
             {
                 var previewApp = new Application(); var preview = new MainUi(true); preview.RenderPreviews(args[1]); preview.Dispose(); return 0;
@@ -56,7 +58,9 @@ namespace CarbonControl
                 {
                     ui = new MainUi(false);
                     app.DispatcherUnhandledException += (s, e) => { Log.Write(e.Exception); if (ui != null) ui.Dispose(); app.Shutdown(1); e.Handled = true; };
-                    ui.Run(args.Contains("--tray")); app.Run(); return 0;
+                    ui.Run(args.Contains("--tray"));
+                    if (args.Contains("--settings")) ui.OpenSettings();
+                    app.Run(); return 0;
                 }
                 catch (Exception ex) { Log.Write(ex); MessageBox.Show(ex.Message, "Carbon Control"); return 1; }
                 finally { if (ui != null) ui.Dispose(); }
@@ -155,9 +159,9 @@ namespace CarbonControl
             Click("Elevate", () =>
             {
                 if (IsAdmin()) { T("SettingsMessage", "当前已是管理员模式"); return; }
-                Process.Start(new ProcessStartInfo(ExePath, "--wait-parent " + Process.GetCurrentProcess().Id) { UseShellExecute = true, Verb = "runas" }); Exit();
+                RestartApplication(true);
             });
-            Click("Reconnect", () => { RestartEngine(); T("SettingsMessage", "已重新连接硬件"); });
+            Click("Reconnect", () => { T("SettingsMessage", "正在重新启动并加载硬件组件…"); RestartApplication(false); });
             C<Button>("InstallHardware").Click += async (s, e) =>
             {
                 if (preview) return;
@@ -166,9 +170,16 @@ namespace CarbonControl
                 {
                     string script = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "setup-hardware.ps1");
                     var start = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"") { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden };
-                    var process = Process.Start(start); await Task.Run(() => process.WaitForExit());
-                    T("SettingsMessage", process.ExitCode == 0 ? "组件已安装，请使用管理员模式并重新连接。" : "组件配置未完成，查看程序目录 setup-hardware.log");
-                    if (process.ExitCode == 0) RestartEngine(); process.Dispose();
+                    using (var process = Process.Start(start))
+                    {
+                        await Task.Run(() => process.WaitForExit());
+                        if (process.ExitCode == 0)
+                        {
+                            T("SettingsMessage", "组件已安装，正在重新启动并加载…");
+                            RestartApplication(!IsAdmin());
+                        }
+                        else T("SettingsMessage", "组件配置未完成，查看程序目录 setup-hardware.log");
+                    }
                 }
                 catch (Exception ex) { T("SettingsMessage", ex.Message); Log.Write(ex); }
                 finally { C<Button>("InstallHardware").IsEnabled = true; }
@@ -176,6 +187,16 @@ namespace CarbonControl
             Click("ExportReport", ExportReport);
         }
         private static string ExePath { get { return Process.GetCurrentProcess().MainModule.FileName; } }
+        private void RestartApplication(bool elevate)
+        {
+            if (preview) { T("SettingsMessage", "正在重新启动并加载硬件组件…"); return; }
+            string arguments = "--wait-parent " + Process.GetCurrentProcess().Id + " --settings";
+            var start = new ProcessStartInfo(ExePath, arguments) { UseShellExecute = true };
+            if (elevate) start.Verb = "runas";
+            var child = Process.Start(start);
+            if (child == null) throw new IOException("未能重新启动应用，请退出后重新打开。");
+            child.Dispose(); Exit();
+        }
         private static bool IsAdmin() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         private void OnPower(object sender, PowerModeChangedEventArgs e) { if (engine != null && e.Mode != PowerModes.StatusChange) engine.Suspend(e.Mode == PowerModes.Suspend); }
         private void OnSessionEnding(object sender, SessionEndingEventArgs e) { if (engine != null) engine.Dispose(); }
@@ -210,6 +231,7 @@ namespace CarbonControl
             engine = new Engine(); engine.Configure(FanMode.Bios, settings.ManualLevel, settings.Curve); engine.Start(); SelectMode(FanMode.Bios);
         }
         private void Show() { window.Dispatcher.Invoke(() => { window.Show(); window.WindowState = WindowState.Normal; window.Activate(); }); }
+        public void OpenSettings() { Navigate("Settings"); Show(); }
         private bool SelectMode(FanMode mode, bool refreshDraft = true, bool fullSpeedRequest = false)
         {
             settings.ManualLevel = (int)C<Slider>("ManualSlider").Value; Save();
@@ -400,7 +422,7 @@ namespace CarbonControl
             var dialog = new SaveFileDialog { FileName = "CarbonControl-检测报告.txt", Filter = "文本文件|*.txt" };
             if (dialog.ShowDialog(window) != true) return;
             var s = engine == null ? new Snapshot() : engine.Current;
-            var b = new StringBuilder(); b.AppendLine("Carbon Control 1.2 · " + DateTime.Now.ToString("s")); b.AppendLine("Model: " + Machine.Model); b.AppendLine("CPU: " + Machine.Cpu); b.AppendLine("Administrator: " + IsAdmin()); b.AppendLine(s.Status);
+            var b = new StringBuilder(); b.AppendLine("Carbon Control " + Assembly.GetExecutingAssembly().GetName().Version.ToString(3) + " · " + DateTime.Now.ToString("s")); b.AppendLine("Model: " + Machine.Model); b.AppendLine("CPU: " + Machine.Cpu); b.AppendLine("Administrator: " + IsAdmin()); b.AppendLine(s.Status);
             if (engine != null) b.AppendLine("Fan: " + engine.FanStatus + "; RPM: " + engine.FanRpm + "; EC mode: " + engine.FanLevel);
             foreach (var v in s.Sensors) b.AppendLine(v.Id + " | " + v.Kind + " | " + v.Name + " | " + v.Value);
             File.WriteAllText(dialog.FileName, b.ToString(), Encoding.UTF8); T("SettingsMessage", "检测报告已导出");
@@ -495,6 +517,8 @@ namespace CarbonControl
             if (scrollBar.Template.FindName("ScrollThumb", scrollBar) == null) throw new Exception("Custom scroll bar template");
             press("NavMonitor"); Present(new Snapshot()); if (C<TextBlock>("CpuTemp").Text != "— °C") throw new Exception("Missing sensor display");
             press("NavSettings"); root.Measure(new Size(960, 700)); root.Arrange(new Rect(0, 0, 960, 700)); root.UpdateLayout();
+            press("Reconnect");
+            if (!C<TextBlock>("SettingsMessage").Text.Contains("重新启动") || C<TextBlock>("SettingsMessage").Text.Contains("已重新连接")) throw new Exception("Reconnect does not claim unverified success");
             File.WriteAllText(output, "PASS: named slots save/load/apply/overwrite, empty slots, full-speed top/overview/tray shortcuts and previous-policy restore, draft preservation, themed scroll bar, drag editing, undo/redo, numeric editing, nine-node save, minimum-size layout.\r\n");
         }
         private static TVisual FindVisual<TVisual>(DependencyObject parent) where TVisual : DependencyObject

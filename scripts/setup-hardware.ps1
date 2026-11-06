@@ -45,7 +45,14 @@ try {
         $installed = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO' -ErrorAction Stop
         if ([version]$installed.DisplayVersion -lt [version]'2.2.0') { throw 'PawnIO 2.2.0 installation was not completed.' }
     }
-    Write-Host 'Hardware components ready. Restart Carbon Control in administrator mode.'
+    # Validate in a new process so the updated runtime configuration is actually used.
+    $application = Join-Path $root 'CarbonControl.exe'
+    if (Test-Path -LiteralPath $application) {
+        $report = Join-Path $root 'hardware-components-check.txt'
+        $check = Start-Process -FilePath $application -ArgumentList @('--check-components', ('"' + $report + '"')) -WindowStyle Hidden -Wait -PassThru
+        if ($check.ExitCode -ne 0) { throw ('Hardware component load check failed. See ' + $report) }
+    }
+    Write-Host 'Hardware components verified. Carbon Control will restart to reload them.'
     Stop-Transcript | Out-Null
     exit 0
 } catch {

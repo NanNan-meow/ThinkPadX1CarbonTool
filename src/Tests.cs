@@ -97,7 +97,8 @@ namespace CarbonControl
                 int curveAssertions = CurveEditingTests.Run();
                 int slotAssertions = CurveSlotTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
                 int pollingAssertions = FanPollingTests.Run();
-                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + ").\r\n"); return 0;
+                int loadingAssertions = HardwareLoadingTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
+                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + ").\r\n"); return 0;
             }
             catch (Exception ex) { File.WriteAllText(output, ex.ToString()); return 1; }
         }

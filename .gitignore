@@ -14,3 +14,4 @@ __pycache__/
 release/
 slot-test-*.xml
 *.tmp
+hardware-components-check.txt
