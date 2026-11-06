@@ -1,0 +1,16 @@
+dist/
+previews/
+*.log
+test-results.txt
+ui-test-results.txt
+hardware-diagnostic.txt
+test-settings.xml
+downloads/
+hardware/
+__pycache__/
+.publish-repo/
+.slot-model-check/
+.fan-polling-check/
+release/
+slot-test-*.xml
+*.tmp

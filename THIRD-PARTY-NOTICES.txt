@@ -1,0 +1,25 @@
+Carbon Control uses separately downloaded, unmodified third-party components:
+
+LibreHardwareMonitor 0.9.6
+Copyright LibreHardwareMonitor contributors and Open Hardware Monitor contributors.
+Mozilla Public License 2.0 (MPL-2.0); additional dependencies have their own licenses.
+Source and notices: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/tree/v0.9.6
+Download: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.6
+The setup script retains the upstream distribution and its license notices in hardware/.
+
+PawnIO 2.2.0 official signed distribution
+Copyright namazso and contributors.
+Installed separately with the official installer and its license terms.
+Source: https://github.com/namazso/PawnIO
+Official installer: https://github.com/namazso/PawnIO.Setup/releases/tag/2.2.0
+
+LpcACPIEC signed module, provided within LibreHardwareMonitor's resources
+PawnIO.Modules, copyright namazso.
+GNU Lesser General Public License v2.1 or later (LGPL-2.1-or-later).
+Source: https://github.com/namazso/PawnIO.Modules
+The module is loaded without modification. Replacing the hardware library also replaces this module.
+
+Protocol references (not bundled libraries):
+https://github.com/namazso/PawnIO/blob/master/PawnIOLib/include/PawnIOLib.h
+https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/v0.9.6/LibreHardwareMonitorLib/PawnIo/PawnIo.cs
+https://github.com/stebet/FanControl.LenovoThinkPad/blob/main/docs/EC-ACCESS.md
