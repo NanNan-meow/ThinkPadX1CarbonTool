@@ -81,7 +81,8 @@ namespace CarbonControl
         private bool exiting, updating, disposed;
         private string activePage = "Monitor", appliedTheme;
         private int tickCount;
-        private bool isFullSpeed, changingSlot;
+        private bool isFullSpeed, changingSlot, changingStartupPolicy;
+        private StartupPolicyGate startupPolicyGate = new StartupPolicyGate();
         private FanMode selectedMode = FanMode.Bios, previousFullSpeedMode = FanMode.Bios;
         private int previousFullSpeedLevel = 4, appliedManualLevel = 4;
         private readonly List<double?> history = new List<double?>();
@@ -153,6 +154,12 @@ namespace CarbonControl
                 if (changingSlot || C<ComboBox>("CurveSlotPicker").SelectedIndex < 0) return;
                 settings.SelectedCurveSlot = C<ComboBox>("CurveSlotPicker").SelectedIndex;
                 UpdateSelectedSlot(); Save();
+            };
+            C<ComboBox>("StartupPolicyPicker").SelectionChanged += (s, e) =>
+            {
+                if (changingStartupPolicy || C<ComboBox>("StartupPolicyPicker").SelectedIndex < 0) return;
+                settings.StartupPolicy = (StartupFanPolicy)C<ComboBox>("StartupPolicyPicker").SelectedIndex; Save();
+                T("SettingsMessage", "启动策略已保存，下次打开并连接成功后自动应用。");
             };
             foreach (string theme in new[] { "System", "Light", "Dark" })
             { string chosen = theme; Click("Theme" + theme, () => { settings.Theme = chosen; ApplyTheme(); Save(); }); }
@@ -228,11 +235,11 @@ namespace CarbonControl
         {
             if (preview) return;
             if (engine != null) { engine.Dispose(); if (!engine.Stopped) throw new IOException("正在结束上一轮连接，请稍后重试"); }
-            engine = new Engine(); engine.Configure(FanMode.Bios, settings.ManualLevel, settings.Curve); engine.Start(); SelectMode(FanMode.Bios);
+            engine = new Engine(); engine.Configure(FanMode.Bios, settings.ManualLevel, settings.Curve); engine.Start(); SelectMode(FanMode.Bios, false, false, true);
         }
         private void Show() { window.Dispatcher.Invoke(() => { window.Show(); window.WindowState = WindowState.Normal; window.Activate(); }); }
         public void OpenSettings() { Navigate("Settings"); Show(); }
-        private bool SelectMode(FanMode mode, bool refreshDraft = true, bool fullSpeedRequest = false)
+        private bool SelectMode(FanMode mode, bool refreshDraft = true, bool fullSpeedRequest = false, bool startupRequest = false)
         {
             settings.ManualLevel = (int)C<Slider>("ManualSlider").Value; Save();
             if (refreshDraft && mode != FanMode.Manual && mode != FanMode.Bios)
@@ -240,6 +247,7 @@ namespace CarbonControl
             if (engine != null && !engine.FanReady && mode != FanMode.Bios)
             { T("CurveMessage", "曲线可以继续编辑。" + engine.FanStatus); T("SettingsMessage", engine.FanStatus); return false; }
             if (engine != null) engine.Configure(mode, settings.ManualLevel, settings.Curve);
+            if (!startupRequest) startupPolicyGate.Cancel();
             selectedMode = mode; isFullSpeed = fullSpeedRequest; UpdateFullSpeedButtons();
             if (mode == FanMode.Manual) appliedManualLevel = settings.ManualLevel;
             foreach (FanMode m in new[] { FanMode.Bios, FanMode.Quiet, FanMode.Balanced, FanMode.Cool, FanMode.Custom }) Highlight("Mode" + m, m == mode);
@@ -287,7 +295,37 @@ namespace CarbonControl
                 picker.Items.Add(new ComboBoxItem { Content = (i + 1) + " · " + slot.Name + (slot.HasCurve ? "" : "（空）"),
                     Foreground = Brush("Text"), Background = Brush("Input") });
             }
-            picker.SelectedIndex = settings.SelectedCurveSlot; changingSlot = false; UpdateSelectedSlot();
+            picker.SelectedIndex = settings.SelectedCurveSlot; changingSlot = false; UpdateSelectedSlot(); RefreshStartupPolicies();
+        }
+        private void RefreshStartupPolicies()
+        {
+            var picker = C<ComboBox>("StartupPolicyPicker"); changingStartupPolicy = true; picker.Items.Clear();
+            foreach (StartupFanPolicy policy in Enum.GetValues(typeof(StartupFanPolicy)))
+            {
+                int index = (int)policy - (int)StartupFanPolicy.Slot1;
+                bool enabled = index < 0 || settings.CurveSlots[index].HasCurve;
+                picker.Items.Add(new ComboBoxItem { Content = StartupPolicyLabel(policy) + (enabled ? "" : "（空）"), IsEnabled = enabled,
+                    Foreground = Brush("Text"), Background = Brush("Input") });
+            }
+            picker.SelectedIndex = (int)settings.StartupPolicy; changingStartupPolicy = false;
+        }
+        private string StartupPolicyLabel(StartupFanPolicy policy)
+        {
+            string[] labels = { "系统自动", "安静", "均衡", "强冷", "自定义（当前保存）" };
+            int index = (int)policy;
+            return index < labels.Length ? labels[index] : "存档 " + (index - labels.Length + 1) + " · " + settings.CurveSlots[index - labels.Length].Name;
+        }
+        private void TryApplyStartupPolicy(Snapshot sample, bool fanReady, bool fanConfirmed, DateTime now)
+        {
+            if (!startupPolicyGate.TryTake(fanReady, fanConfirmed, sample, now)) return;
+            try
+            {
+                CurvePoint[] points; var mode = StartupPolicyResolver.Resolve(settings, out points);
+                if (mode == FanMode.Custom) settings.Curve = points;
+                if (SelectMode(mode, !curveDraft.IsDirty, false, true))
+                    T("SettingsMessage", "已加载启动策略：" + StartupPolicyLabel(settings.StartupPolicy));
+            }
+            catch (Exception ex) { Log.Write(ex); T("SettingsMessage", "启动策略未应用：" + ex.Message); }
         }
         private void UpdateSelectedSlot()
         {
@@ -316,6 +354,7 @@ namespace CarbonControl
             if (showEvent.WaitOne(0)) Show();
             var sample = engine.Current;
             bool fresh = (DateTime.UtcNow - sample.Timestamp).TotalSeconds <= 5;
+            TryApplyStartupPolicy(sample, engine.FanReady, engine.FanConfirmed, DateTime.UtcNow);
             Present(fresh ? sample : new Snapshot { Status = "正在重新获取传感器数据" });
             curveChart.CurrentTemperature = fresh ? sample.CpuTemperature : null;
             history.Add(fresh ? sample.CpuTemperature : null); if (history.Count > 60) history.RemoveAt(0);
@@ -461,6 +500,19 @@ namespace CarbonControl
         {
             var root = (Grid)window.Content; window.Content = null; root.Resources = window.Resources;
             Action<string> press = name => C<Button>(name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var startupSample = new Snapshot { CpuTemperature = 60, Timestamp = DateTime.UtcNow };
+            if (settings.StartupPolicy != StartupFanPolicy.Balanced || C<ComboBox>("StartupPolicyPicker").SelectedIndex != (int)StartupFanPolicy.Balanced) throw new Exception("Default startup strategy");
+            TryApplyStartupPolicy(startupSample, false, false, startupSample.Timestamp);
+            if (selectedMode != FanMode.Bios || !startupPolicyGate.Pending) throw new Exception("Startup waits for hardware");
+            TryApplyStartupPolicy(startupSample, true, false, startupSample.Timestamp);
+            if (selectedMode != FanMode.Bios || !startupPolicyGate.Pending) throw new Exception("Startup waits for confirmed fan connection");
+            TryApplyStartupPolicy(startupSample, true, true, startupSample.Timestamp);
+            if (selectedMode != FanMode.Balanced || startupPolicyGate.Pending) throw new Exception("Startup automatically applies the default strategy");
+            C<ComboBox>("StartupPolicyPicker").SelectedIndex = (int)StartupFanPolicy.Quiet;
+            if (settings.StartupPolicy != StartupFanPolicy.Quiet || selectedMode != FanMode.Balanced) throw new Exception("Changing startup preference preserves the current strategy");
+            startupPolicyGate = new StartupPolicyGate(); press("ModeCool");
+            TryApplyStartupPolicy(startupSample, true, true, startupSample.Timestamp);
+            if (selectedMode != FanMode.Cool || startupPolicyGate.Pending) throw new Exception("Manual selection cancels pending automatic startup");
             press("NavFan"); if (activePage != "Fan" || C<StackPanel>("FanPage").Visibility != Visibility.Visible) throw new Exception("Fan navigation");
             press("ThemeLight"); if (appliedTheme != "Light") throw new Exception("Light theme");
             press("ThemeDark"); if (appliedTheme != "Dark") throw new Exception("Dark theme");
@@ -485,6 +537,10 @@ namespace CarbonControl
             press("SaveCurve"); if (settings.Curve.Length != 9 || curveDraft.IsDirty) throw new Exception("Save variable-length curve");
             C<TextBox>("CurveSlotName").Text = "日常办公"; press("SaveCurveSlot");
             if (!settings.CurveSlots[0].HasCurve || settings.CurveSlots[0].Name != "日常办公" || settings.CurveSlots[0].Curve.Length != 9) throw new Exception("Save named curve slot");
+            C<ComboBox>("StartupPolicyPicker").SelectedIndex = (int)StartupFanPolicy.Slot1;
+            startupPolicyGate = new StartupPolicyGate(); TryApplyStartupPolicy(startupSample, true, true, startupSample.Timestamp);
+            if (selectedMode != FanMode.Custom || settings.Curve.Length != 9) throw new Exception("Saved curve slot used as startup strategy");
+            C<ComboBox>("StartupPolicyPicker").SelectedIndex = (int)StartupFanPolicy.Balanced;
             press("ModeQuiet"); press("LoadCurveSlot");
             if (curveDraft.Points.Count != 9 || selectedMode != FanMode.Quiet) throw new Exception("Loading slot edits draft without changing running policy");
             press("ApplyCurveSlot"); if (selectedMode != FanMode.Custom || settings.Curve.Length != 9) throw new Exception("Apply saved slot");
@@ -519,7 +575,7 @@ namespace CarbonControl
             press("NavSettings"); root.Measure(new Size(960, 700)); root.Arrange(new Rect(0, 0, 960, 700)); root.UpdateLayout();
             press("Reconnect");
             if (!C<TextBlock>("SettingsMessage").Text.Contains("重新启动") || C<TextBlock>("SettingsMessage").Text.Contains("已重新连接")) throw new Exception("Reconnect does not claim unverified success");
-            File.WriteAllText(output, "PASS: named slots save/load/apply/overwrite, empty slots, full-speed top/overview/tray shortcuts and previous-policy restore, draft preservation, themed scroll bar, drag editing, undo/redo, numeric editing, nine-node save, minimum-size layout.\r\n");
+            File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, minimum-size layout.\r\n");
         }
         private static TVisual FindVisual<TVisual>(DependencyObject parent) where TVisual : DependencyObject
         {

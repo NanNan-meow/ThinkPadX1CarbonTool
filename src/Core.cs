@@ -9,6 +9,7 @@ using System.Xml.Serialization;
 namespace CarbonControl
 {
     public enum FanMode { Bios, Quiet, Balanced, Cool, Custom, Manual }
+    public enum StartupFanPolicy { Bios, Quiet, Balanced, Cool, Custom, Slot1, Slot2, Slot3 }
     public class CurvePoint
     {
         public int Temperature { get; set; }
@@ -34,6 +35,7 @@ namespace CarbonControl
         public bool CloseToTray { get; set; }
         public bool StartMinimized { get; set; }
         public int ManualLevel { get; set; }
+        public StartupFanPolicy StartupPolicy { get; set; }
         public CurvePoint[] Curve { get; set; }
         public CurveSlot[] CurveSlots
         {
@@ -43,7 +45,7 @@ namespace CarbonControl
         public int SelectedCurveSlot { get; set; }
         public Settings()
         {
-            Theme = "System"; CloseToTray = true; ManualLevel = 4;
+            Theme = "System"; CloseToTray = true; ManualLevel = 4; StartupPolicy = StartupFanPolicy.Balanced;
             Curve = FanPolicy.Preset(FanMode.Balanced).ToArray();
             curveSlots = new CurveSlot[CurveSlotCount];
             for (int i = 0; i < curveSlots.Length; i++) curveSlots[i] = new CurveSlot { Name = DefaultSlotName(i) };
@@ -57,6 +59,7 @@ namespace CarbonControl
                 FanPolicy.Validate(s.Curve);
                 if (s.ManualLevel < 0 || s.ManualLevel > 7) s.ManualLevel = 4;
                 if (s.Theme != "System" && s.Theme != "Dark" && s.Theme != "Light") s.Theme = "System";
+                s.NormalizeStartupPolicy();
                 s.NormalizeCurveSlots(!s.slotsProvided);
                 return s;
             }
@@ -64,6 +67,7 @@ namespace CarbonControl
         public void Save(string path)
         {
             FanPolicy.Validate(Curve);
+            NormalizeStartupPolicy();
             NormalizeCurveSlots(false);
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             string temp = path + ".tmp";
@@ -85,6 +89,10 @@ namespace CarbonControl
             NormalizeCurveSlots(false);
             if (!curveSlots[index].HasCurve) throw new InvalidOperationException("此槽位尚未保存曲线");
             return CloneCurve(curveSlots[index].Curve);
+        }
+        private void NormalizeStartupPolicy()
+        {
+            if (!Enum.IsDefined(typeof(StartupFanPolicy), StartupPolicy)) StartupPolicy = StartupFanPolicy.Balanced;
         }
         private void NormalizeCurveSlots(bool migrateLegacy)
         {
@@ -116,6 +124,53 @@ namespace CarbonControl
         { return points.Select(p => new CurvePoint(p.Temperature, p.Level)).ToArray(); }
         private static void CheckSlotIndex(int index)
         { if (index < 0 || index >= CurveSlotCount) throw new ArgumentOutOfRangeException("index"); }
+    }
+    public sealed class StartupPolicyGate
+    {
+        private bool pending = true;
+        public bool Pending { get { return pending; } }
+        public void Cancel() { pending = false; }
+        public bool TryTake(bool fanReady, bool fanConfirmed, Snapshot sample, DateTime now)
+        {
+            if (!pending || !fanReady || !fanConfirmed || sample == null || !SensorMap.Valid(sample.CpuTemperature) || sample.CpuTemperature > 125)
+                return false;
+            double age = (now - sample.Timestamp).TotalSeconds;
+            if (age > 5 || age < -1) return false;
+            pending = false;
+            return true;
+        }
+    }
+    public static class StartupPolicyResolver
+    {
+        public static FanMode Resolve(Settings settings, out CurvePoint[] curve)
+        {
+            if (settings == null) throw new ArgumentNullException("settings");
+            StartupFanPolicy selected = Enum.IsDefined(typeof(StartupFanPolicy), settings.StartupPolicy)
+                ? settings.StartupPolicy : StartupFanPolicy.Balanced;
+            if (selected >= StartupFanPolicy.Slot1 && selected <= StartupFanPolicy.Slot3)
+            {
+                int index = (int)selected - (int)StartupFanPolicy.Slot1;
+                var slots = settings.CurveSlots;
+                if (slots == null || index >= slots.Length || slots[index] == null || !slots[index].HasCurve)
+                    throw new InvalidOperationException("启动策略的曲线存档尚未保存，请先保存曲线或选择其他策略。");
+                FanPolicy.Validate(slots[index].Curve);
+                curve = Clone(slots[index].Curve);
+                return FanMode.Custom;
+            }
+            if (selected == StartupFanPolicy.Custom)
+            {
+                FanPolicy.Validate(settings.Curve);
+                curve = Clone(settings.Curve);
+                return FanMode.Custom;
+            }
+            FanMode mode = selected == StartupFanPolicy.Bios ? FanMode.Bios :
+                selected == StartupFanPolicy.Quiet ? FanMode.Quiet :
+                selected == StartupFanPolicy.Cool ? FanMode.Cool : FanMode.Balanced;
+            curve = FanPolicy.Preset(mode).ToArray();
+            return mode;
+        }
+        private static CurvePoint[] Clone(IList<CurvePoint> points)
+        { return points.Select(p => new CurvePoint(p.Temperature, p.Level)).ToArray(); }
     }
     public sealed class FanPolicy
     {

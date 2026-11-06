@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.2.1',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.3.0',
     [string]$ApplicationDirectory = 'dist\CarbonControl-v1.2',
     [string]$OutputDirectory = 'release'
 )

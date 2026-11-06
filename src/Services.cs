@@ -164,6 +164,7 @@ namespace CarbonControl
         public string FanStatus = "正在连接风扇";
         public int? FanRpm, FanLevel;
         public bool FanReady;
+        public bool FanConfirmed;
         public bool Stopped { get { return (fanThread == null || !fanThread.IsAlive) && (sensorThread == null || !sensorThread.IsAlive); } }
         public Snapshot Current { get { lock (gate) return current; } }
         public FanMode Mode { get { lock (gate) return mode; } }
@@ -212,13 +213,15 @@ namespace CarbonControl
                     controller.Tick(selected, level, points, s, DateTime.UtcNow);
                     if (watchdog != null && controller.Healthy) watchdog.Pulse();
                     FanStatus = controller.Status; FanRpm = controller.Rpm; FanLevel = controller.ActualLevel;
+                    FanConfirmed = controller.Healthy && controller.ActualLevel.HasValue;
                     if (selected == FanMode.Bios && !controller.OwnsFan) suspendAck.Set();
                     if (WaitHandle.WaitAny(new WaitHandle[] { stop, configurationChanged }, 1000) == 0) break;
                 }
             }
-            catch (Exception ex) { FanReady = false; FanStatus = ex.Message; Log.Write(ex); }
+            catch (Exception ex) { FanReady = false; FanConfirmed = false; FanStatus = ex.Message; Log.Write(ex); }
             finally
             {
+                FanConfirmed = false;
                 bool restored = true;
                 if (controller != null) { try { controller.Restore(); } catch (Exception ex) { restored = false; Log.Write(ex); } }
                 if (watchdog != null) watchdog.Close(restored);

@@ -9,14 +9,14 @@ on:
       tag:
         description: Existing version tag to publish
         required: true
-        default: v1.2.1
+        default: v1.3.0
         type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -86,6 +86,17 @@ jobs:
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset)) { throw "Release asset is missing: $asset" }
           }
+          $published = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp
+          if ($LASTEXITCODE -ne 0) { throw 'Could not check existing release versions.' }
+          foreach ($page in (($published -join "`n") | ConvertFrom-Json)) {
+            foreach ($release in $page) {
+              if (-not $release.draft -and -not $release.prerelease -and $release.tag_name -match '^v\d+\.\d+\.\d+$') {
+                if ([version]$release.tag_name.Substring(1) -gt [version]$env:RELEASE_VERSION) {
+                  throw 'A newer stable release already exists. The older version will not be republished.'
+                }
+              }
+            }
+          }
           gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 1>$null 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
@@ -97,3 +108,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed.' }
           gh release view $tag --repo $env:GITHUB_REPOSITORY --json url,tagName,assets
           if ($LASTEXITCODE -ne 0) { throw 'Published release verification failed.' }
+
+      - name: Remove older releases after verifying the new download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .\scripts\prune-releases.ps1 -Tag $env:RELEASE_TAG -Repository $env:GITHUB_REPOSITORY

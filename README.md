@@ -2,13 +2,13 @@
 
 面向 **ThinkPad X1 Carbon Gen 8 / i5-10210U、i5-10310U** 的 Windows 温度监测与风扇管理工具。原生 WPF 界面，支持 Windows 10/11 x64、.NET Framework 4.8。
 
-[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.2.1.md)
+[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.3.0.md)
 
 ![监控总览，截图为示例数据](docs/images/monitor-dark.png)
 
 ## 使用
 
-1. 从 Releases 下载 `CarbonControl-v1.2.1-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
+1. 从 Releases 下载 `CarbonControl-v1.3.0-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
 2. 首次进入 **设置 → 配置硬件组件**，安装 LibreHardwareMonitor 0.9.6 与 PawnIO 2.2.0 官方组件。下载文件会校验 SHA-256。
 3. 组件检查通过后，应用会自动重启并返回设置页，加载最新的硬件组件和配置；也可点击 **管理员模式** 启动。
 4. 进入 **风扇策略**，选择预设，或直接拖动曲线节点后点击 **保存并应用**。
@@ -26,6 +26,7 @@ Release 包提供主程序和组件配置入口，硬件组件在首次配置时
 - 三个可命名曲线存档，支持保存、覆盖、载入及直接应用。
 - **全速 · 7 档**快捷按钮，再次点击返回原策略或原手动档位；监控页、风扇页与托盘均可操作。
 - 单例运行、托盘驻留、开机登录启动、Dark / Light / 跟随系统。
+- 打开应用并连接成功后自动应用所选风扇策略，支持预设与三个命名存档，默认均衡。
 - 导出硬件检测报告。
 
 ![风扇曲线与存档，截图为示例数据](docs/images/fan-dark.png)
@@ -37,6 +38,8 @@ Release 包提供主程序和组件配置入口，硬件组件在首次配置时
 拖动节点：左右调温度，上下调档位；点击空白处添加节点，右键节点删除。选中节点后也可输入数值并按 Enter。方向键微调，Shift + 左右键每次调整 5°C，Delete 删除，Ctrl+Z / Ctrl+Y 撤销和重做。
 
 选中存档槽位，输入名字，点击 **存入**；再次存入会覆盖该槽位。**载入**恢复到编辑区，**载入并应用**直接启用。绿色虚线表示当前 CPU 温度。
+
+在「设置 → 启动与托盘 → 启动风扇策略」选择默认策略。程序等温度读数新鲜有效、风扇接口连接确认后自动启用，每次启动只执行一次；之后手动切换不会被覆盖。启动策略可以使用系统自动、安静、均衡、强冷、当前自定义曲线或已有存档，空存档不可选。
 
 风扇使用 0–7 档：0 档停转，7 档为最高普通档位；每档实际 RPM 取决于固件。节点保持温度有序与档位递增，最后一个节点在 90°C 以内达到 7 档。升温立即升档，降温使用 3°C 回差与 8 秒延迟。
 
@@ -65,12 +68,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test -Preview
 输出为 `dist\CarbonControl-v1.2\CarbonControl.exe`。测试报告为 `test-results.txt` 和 `ui-test-results.txt`，示例界面截图位于 `previews`。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.2.1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.3.0
 ```
 
 发布包及 SHA-256 校验文件输出到 `release`。GitHub Actions 在推送 `v*` 标签时构建、运行测试并创建 Release。
 
-当前包含 533 项逻辑断言及界面交互检查，覆盖首次安装后的组件加载。硬件协议测试使用模拟端口，截图使用示例数据；具体机器的转速响应与超时频率需实机运行验证。
+新版正式 Release 的程序包与校验文件验证成功后，会自动删除更早的正式 Release，下载页保留最新版本。
+
+当前包含 590 项逻辑断言及界面交互检查，覆盖首次安装后的组件加载、启动策略的等待与手动接管。硬件协议测试使用模拟端口，截图使用示例数据；具体机器的转速响应与超时频率需实机运行验证。
 
 源码位于 `src`，构建脚本为 `build.ps1`，硬件配置脚本为 `scripts/setup-hardware.ps1`。
 
