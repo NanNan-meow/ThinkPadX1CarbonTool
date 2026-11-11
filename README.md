@@ -2,13 +2,13 @@
 
 面向 **ThinkPad X1 Carbon Gen 8 / i5-10210U、i5-10310U** 的 Windows 温度监测与风扇管理工具。原生 WPF 界面，支持 Windows 10/11 x64、.NET Framework 4.8。
 
-[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.1.md)
+[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.2.md)
 
 ![监控总览，截图为示例数据](docs/images/monitor-dark.png)
 
 ## 使用
 
-1. 从 Releases 下载 `CarbonControl-v1.4.1-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
+1. 从 Releases 下载 `CarbonControl-v1.4.2-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
 2. 首次进入 **设置 → 配置硬件组件**，安装 LibreHardwareMonitor 0.9.6 与 PawnIO 2.2.0 官方组件。下载文件会校验 SHA-256。
 3. 组件检查通过后，应用会自动重启并返回设置页，加载最新的硬件组件和配置；也可点击 **管理员模式** 启动。
 4. 进入 **风扇策略**，选择预设，或直接拖动曲线节点后点击 **保存并应用**。
@@ -20,6 +20,7 @@ Release 包提供主程序和组件配置入口，硬件组件在首次配置时
 ## 功能
 
 - 每秒刷新 CPU 温度、核心平均频率、整包功耗、使用率，以及 Intel 核显使用率和功耗。
+- CPU 当前限制：PL1、PL2、时间窗口、睿频策略、频率上限与实时热／功耗限制状态，每 2 秒读取。
 - 最近 60 秒温度趋势、风扇 RPM 与档位确认状态。
 - 电池健康度、循环次数、充放电功率和 60 秒功率趋势，以及容量、电压和预计续航。
 - SSD 温度、寿命剩余估计、累计读写与空间使用率，支持多个存储设备。
@@ -79,6 +80,8 @@ EC 通信使用有界重试与退避，并兼容部分固件的 IBF 清除读取
 
 CPU 功耗读取 CPU Package，包含核显部分；GPU 功耗读取 Intel 图形域。两者不直接相加。GPU 使用率取最忙的 Intel GPU 引擎。频率优先显示核心平均读数，硬件库未连接时使用 Windows 处理器频率；缺少读数时显示 `—`。
 
+CPU 限制卡的 PL1、PL2 和时间窗口来自处理器封装 MSR；热／功耗状态使用当前状态位。睿频和频率上限读取活动 Windows 电源方案，并选择当前接电／电池对应的值；0 MHz 显示为「系统调节」。
+
 风扇控制仅在 Lenovo 机型代码 **20U9 / 20UA** 且 CPU 为 **i5-10210U / i5-10310U** 时启用。开机启动使用当前用户的计划任务，在管理员模式下设置。正常运行只有一个主程序托盘；启用控制时还会有一个不带托盘的守护进程。
 
 ## 构建与验证
@@ -92,18 +95,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test -Preview
 输出为 `dist\CarbonControl-v1.4\CarbonControl.exe`。测试报告为 `test-results.txt` 和 `ui-test-results.txt`，示例界面截图位于 `previews`。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.2
 ```
 
 发布包及 SHA-256 校验文件输出到 `release`。GitHub Actions 在推送 `v*` 标签时构建、运行测试并创建 Release。
 
 新版正式 Release 的程序包与校验文件验证成功后，会自动删除更早的正式 Release，下载页保留最新版本。
 
-672 项逻辑断言及界面交互检查覆盖组件加载、启动策略、风扇通信、电池与 SSD 字段映射、电源模式应用与恢复。协议和电源切换测试使用模拟后端，截图使用示例数据。
+744 项逻辑断言及界面交互检查覆盖组件加载、启动策略、风扇通信、电池与 SSD 字段映射、电源模式应用与恢复、CPU 限制读取和窗口边框主题。协议和电源切换测试使用模拟后端，截图使用示例数据。
 
 实机测试：先退出托盘程序，再右键以管理员身份运行包内的 `TestHardware.cmd`。测试读取电池和 SSD，切换电源模式，在相同 CPU 负载下比较硬件频率，并检查风扇档位与 RPM 变化。测试会恢复原设置，报告位于 `reports`；未取得实测证据的项目单独标记。源码目录可运行 `实机测试.cmd`。
 
 [查看本机实测结果](docs/HARDWARE-VALIDATION.md)：低温与性能模式已观察到频率和功耗变化，风扇升速、SSD 读数及原设置恢复均已验证。
+
+只读检测可右键以管理员身份运行包内 `ReadHardware.cmd`；源码目录对应 `读取CPU限制.cmd`。Windows 10 的失焦标题栏已分别验证深色和浅色绘制。
 
 源码位于 `src`，构建脚本为 `build.ps1`，硬件配置脚本为 `scripts/setup-hardware.ps1`。
 

@@ -58,6 +58,8 @@ namespace CarbonControl
     {
         private object computer;
         private readonly BasicSensors basic = new BasicSensors();
+        private readonly CpuLimitMonitor cpuLimits = new CpuLimitMonitor();
+        private readonly CpuPolicyMonitor cpuPolicy = new CpuPolicyMonitor();
         private readonly object deviceGate = new object();
         private readonly ManualResetEvent stopDevices = new ManualResetEvent(false);
         private readonly BatteryReportCache batteryReport;
@@ -97,15 +99,20 @@ namespace CarbonControl
                     foreach (object h in (IEnumerable)Get(owner, "Hardware"))
                         if (!IsDevice(h)) ReadHardware(h, data);
                 MergeDevices(data);
-                var s = SensorMap.Map(data); DeviceTelemetry.Fill(s); batteryReport.Apply(s); basic.Fill(s); s.Status = status; return s;
+                var s = SensorMap.Map(data); DeviceTelemetry.Fill(s); batteryReport.Apply(s); basic.Fill(s); FillCpuLimits(s); s.Status = status; return s;
             }
             catch (Exception ex)
             {
                 Log.Write(ex);
                 MergeDevices(data);
                 var s = SensorMap.Map(data); s.Status = "传感器读取失败：" + Root(ex).Message;
-                DeviceTelemetry.Fill(s); batteryReport.Apply(s); basic.Fill(s); return s;
+                DeviceTelemetry.Fill(s); batteryReport.Apply(s); basic.Fill(s); FillCpuLimits(s); return s;
             }
+        }
+        private void FillCpuLimits(Snapshot sample)
+        {
+            try { sample.CpuLimits = cpuLimits.Read(); } catch (Exception ex) { Log.Write(ex); }
+            try { sample.CpuPolicy = cpuPolicy.Read(); } catch (Exception ex) { Log.Write(ex); }
         }
         private static bool IsDevice(object hardware)
         {
@@ -187,6 +194,7 @@ namespace CarbonControl
         {
             if (Interlocked.Exchange(ref disposed, 1) != 0) return;
             stopDevices.Set();
+            cpuLimits.Dispose();
             object owner = Interlocked.Exchange(ref computer, null);
             var worker = deviceWorker;
             if (worker == null || worker.Join(2000)) { Close(owner); stopDevices.Dispose(); }

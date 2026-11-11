@@ -101,7 +101,10 @@ namespace CarbonControl
                 int startupAssertions = StartupPolicyTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
                 int performanceAssertions = PerformanceControlTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
                 int deviceAssertions = DeviceTelemetryTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
-                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions + startupAssertions + performanceAssertions + deviceAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + "), startup policy (" + startupAssertions + "), power modes (" + performanceAssertions + "), battery/storage (" + deviceAssertions + ").\r\n"); return 0;
+                int limitAssertions = CpuLimitsTests.Run();
+                int policyAssertions = CpuPolicyTests.Run();
+                int frameAssertions = WindowFrameTests.Run();
+                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions + startupAssertions + performanceAssertions + deviceAssertions + limitAssertions + policyAssertions + frameAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + "), startup policy (" + startupAssertions + "), power modes (" + performanceAssertions + "), battery/storage (" + deviceAssertions + "), CPU limits (" + limitAssertions + "), current CPU policy (" + policyAssertions + "), window frame themes (" + frameAssertions + ").\r\n"); return 0;
             }
             catch (Exception ex) { File.WriteAllText(output, ex.ToString()); return 1; }
         }

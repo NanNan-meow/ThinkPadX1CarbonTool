@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.4.1',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.4.2',
     [string]$ApplicationDirectory = 'dist\CarbonControl-v1.4',
     [string]$OutputDirectory = 'release'
 )
@@ -37,6 +37,11 @@ start "" "%~dp0CarbonControl.exe"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0test-hardware.ps1"
 pause
 '@ | Set-Content -LiteralPath (Join-Path $bundle 'TestHardware.cmd') -Encoding ASCII
+@'
+@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0test-hardware.ps1" -ReadOnly
+pause
+'@ | Set-Content -LiteralPath (Join-Path $bundle 'ReadHardware.cmd') -Encoding ASCII
 $archive = Join-Path $output ('CarbonControl-v' + $Version + '-win-x64.zip')
 Compress-Archive -LiteralPath $bundle -DestinationPath $archive -Force
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

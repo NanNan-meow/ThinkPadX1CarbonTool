@@ -58,6 +58,10 @@ namespace CarbonControl
                     foreach (var b in s.Batteries) text.AppendLine("Battery: " + b.Name + " | State=" + b.State + " | Health=" + b.HealthPercent + "% | Cycles=" + b.CycleCount + " | Charge=" + b.ChargePowerW + "W | Discharge=" + b.DischargePowerW + "W");
                     foreach (var d in s.Drives) text.AppendLine("Storage: " + d.Name + " | Temperature=" + d.Temperature + "C | Life remaining=" + d.HealthPercent + "% | Written=" + d.TotalWrittenGB + "GB");
                     text.AppendLine("Power settings: " + PerformanceController.Probe());
+                    var l = s.CpuLimits; var p = s.CpuPolicy;
+                    text.AppendLine("CPU limits: PL1=" + l.LongPowerW + "W; Enabled=" + l.LongEnabled + "; PL2=" + l.ShortPowerW + "W; Enabled=" + l.ShortEnabled + "; Tau=" + l.TimeWindowSeconds + "s; Locked=" + l.Locked + "; Source=" + l.Source);
+                    text.AppendLine("CPU policy: AC=" + p.OnAcPower + "; Boost=" + p.BoostMode + "; Max MHz=" + p.MaximumFrequencyMhz);
+                    text.AppendLine("CPU limiting: Thermal=" + l.ThermalThrottling + "; Power=" + l.PowerThrottling);
                     text.AppendLine("No fan device opened; no EC writes."); File.WriteAllText(output, text.ToString(), Encoding.UTF8);
                 }
                 return 0;

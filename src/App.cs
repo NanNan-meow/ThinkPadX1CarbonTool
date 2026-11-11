@@ -72,6 +72,7 @@ namespace CarbonControl
     public sealed partial class MainUi : IDisposable
     {
         private readonly Window window;
+        private readonly WindowFrame windowFrame;
         private readonly bool preview;
         private readonly string settingsPath;
         private Settings settings;
@@ -98,6 +99,7 @@ namespace CarbonControl
             try { settings = preview ? new Settings() : Settings.Read(settingsPath); }
             catch (Exception ex) { Log.Write(ex); settings = new Settings(); }
             using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("MainWindow.xaml")) window = (Window)XamlReader.Load(s);
+            windowFrame = new WindowFrame(window);
             window.Icon = MakeWindowIcon();
             MakeCurveEditor(); BindButtons(); LoadCurve(settings.Curve); RefreshCurveSlots(); ApplyTheme(); Navigate("Monitor");
             InitializeDeviceUi();
@@ -380,6 +382,7 @@ namespace CarbonControl
         {
             T("CpuTemp", Format(s.CpuTemperature, "0", "°C")); T("CpuClock", Format(s.CpuClock, "0.00", "GHz")); T("CpuPower", Format(s.CpuPower, "0.0", "W"));
             T("CpuLoad", Format(s.CpuLoad, "0", "%")); T("GpuLoad", Format(s.GpuLoad, "0", "%")); T("GpuPower", Format(s.GpuPower, "0.0", "W"));
+            PresentCpuLimits(s);
         }
         private static string Format(double? v, string format, string unit) { return (SensorMap.Valid(v) ? v.Value.ToString(format, CultureInfo.InvariantCulture) : "—") + " " + unit; }
         private void Navigate(string page)
@@ -406,6 +409,7 @@ namespace CarbonControl
                 RefreshCurveSlots();
             }
             foreach (string theme in new[] { "System", "Light", "Dark" }) Highlight("Theme" + theme, settings.Theme == theme);
+            windowFrame.Apply(light);
         }
         private void MakeCurveEditor()
         {
@@ -475,6 +479,7 @@ namespace CarbonControl
             if (engine != null) b.AppendLine("Fan: " + engine.FanStatus + "; RPM: " + engine.FanRpm + "; EC mode: " + engine.FanLevel);
             foreach (var v in s.Sensors) b.AppendLine(v.Id + " | " + v.Kind + " | " + v.Name + " | " + v.Value);
             AppendDeviceReport(b, s);
+            AppendCpuLimits(b, s);
             File.WriteAllText(dialog.FileName, b.ToString(), Encoding.UTF8); T("SettingsMessage", "检测报告已导出");
         }
         private static System.Drawing.Icon TrayIcon()
@@ -488,7 +493,10 @@ namespace CarbonControl
             Directory.CreateDirectory(directory);
             // Render the content directly: an unshown Window has Hidden visibility.
             var root = (Grid)window.Content; window.Content = null; root.Resources = window.Resources;
-            Present(new Snapshot { CpuTemperature = 54, CpuClock = 2.68, CpuPower = 12.4, CpuLoad = 28, GpuLoad = 16, GpuPower = 1.8 });
+            Present(new Snapshot { CpuTemperature = 54, CpuClock = 2.68, CpuPower = 12.4, CpuLoad = 28, GpuLoad = 16, GpuPower = 1.8,
+                CpuLimits = new CpuLimitReading { LongPowerW = 15, ShortPowerW = 44, TimeWindowSeconds = 28, LongEnabled = true, ShortEnabled = true,
+                    ThermalThrottling = false, PowerThrottling = false, Source = "封装 MSR" },
+                CpuPolicy = new CpuPolicyReading { BoostMode = 2, MaximumFrequencyMhz = 0, OnAcPower = true } });
             for (int i = 0; i < 60; i++) batteryPowerHistory.Add(-7.4 + Math.Sin(i * 0.24) * 1.6 + Math.Cos(i * 0.53) * 0.5);
             PresentDevices(DevicePreview());
             T("FanSummary", "风扇  3,280 RPM"); T("FanSummaryMode", "均衡 · 2 档"); T("FanActual", "3,280 RPM"); T("ConnectionLabel", "界面预览 · 示例数据"); T("HardwareStatus", "界面预览 · 示例数据");
@@ -586,10 +594,10 @@ namespace CarbonControl
             if (scrollBar.Template.FindName("ScrollThumb", scrollBar) == null) throw new Exception("Custom scroll bar template");
             press("NavMonitor"); Present(new Snapshot()); if (C<TextBlock>("CpuTemp").Text != "— °C") throw new Exception("Missing sensor display");
             press("NavSettings"); root.Measure(new Size(960, 700)); root.Arrange(new Rect(0, 0, 960, 700)); root.UpdateLayout();
-            TestDeviceUi(root, press);
+            TestDeviceUi(root, press); TestCpuLimitUi();
             press("Reconnect");
             if (C<TextBlock>("SettingsMessage").Text != "正在重启…") throw new Exception("Reconnect progress status");
-            File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, battery/SSD pages, performance and fan linkage, minimum-size layout.\r\n");
+            File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, battery/SSD pages, performance and fan linkage, live CPU limit fields, minimum-size layout.\r\n");
         }
         private static TVisual FindVisual<TVisual>(DependencyObject parent) where TVisual : DependencyObject
         {
@@ -606,6 +614,7 @@ namespace CarbonControl
         {
             if (disposed) return; disposed = true;
             if (timer != null) timer.Stop();
+            windowFrame.Dispose();
             if (performanceController != null) { try { performanceController.Dispose(); } catch (Exception ex) { Log.Write(ex); } }
             if (engine != null) engine.Dispose();
             if (tray != null) { tray.Visible = false; tray.Icon.Dispose(); tray.Dispose(); }

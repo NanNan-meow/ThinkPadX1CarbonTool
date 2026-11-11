@@ -241,6 +241,8 @@ namespace CarbonControl
         public List<SensorReading> Sensors = new List<SensorReading>();
         public List<BatteryReading> Batteries = new List<BatteryReading>();
         public List<StorageReading> Drives = new List<StorageReading>();
+        public CpuLimitReading CpuLimits = new CpuLimitReading();
+        public CpuPolicyReading CpuPolicy = new CpuPolicyReading();
     }
     public static class SensorMap
     {
