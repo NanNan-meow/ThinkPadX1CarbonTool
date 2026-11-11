@@ -58,34 +58,114 @@ namespace CarbonControl
     {
         private object computer;
         private readonly BasicSensors basic = new BasicSensors();
+        private readonly object deviceGate = new object();
+        private readonly ManualResetEvent stopDevices = new ManualResetEvent(false);
+        private readonly BatteryReportCache batteryReport;
+        private List<SensorReading> batterySensors = new List<SensorReading>(), storageSensors = new List<SensorReading>();
+        private DateTime batteryUpdated, storageUpdated;
+        private Thread deviceWorker;
+        private int disposed;
         private string status;
-        public HardwareMonitor()
+        public HardwareMonitor() : this(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CarbonControl", "telemetry")) { }
+        internal HardwareMonitor(string telemetryDirectory)
         {
+            batteryReport = new BatteryReportCache(telemetryDirectory);
             try
             {
                 if (!HardwareComponents.IsInstalled) { status = "点击「配置硬件组件」连接温度与功耗传感器"; return; }
                 var a = HardwareComponents.LoadLibrary();
                 computer = Activator.CreateInstance(a.GetType("LibreHardwareMonitor.Hardware.Computer", true));
                 Set(computer, "IsCpuEnabled", true); Set(computer, "IsGpuEnabled", true);
+                Set(computer, "IsBatteryEnabled", true); Set(computer, "IsStorageEnabled", true);
                 Call(computer, "Open"); status = "传感器已连接";
             }
-            catch (Exception ex) { status = "传感器连接失败：" + Root(ex).Message; Log.Write(ex); Dispose(); }
+            catch (Exception ex) { status = "传感器连接失败：" + Root(ex).Message; Log.Write(ex); Close(computer); computer = null; }
+            finally
+            {
+                object owner = computer;
+                deviceWorker = new Thread(delegate() { ReadDevices(owner); }) { IsBackground = true, Name = "Battery and SSD sensors" };
+                deviceWorker.Start();
+            }
         }
         public Snapshot Read()
         {
             var data = new List<SensorReading>();
             try
             {
-                if (computer != null)
-                    foreach (object h in (IEnumerable)Get(computer, "Hardware")) ReadHardware(h, data);
-                var s = SensorMap.Map(data); basic.Fill(s); s.Status = status; return s;
+                object owner = computer;
+                if (owner != null)
+                    foreach (object h in (IEnumerable)Get(owner, "Hardware"))
+                        if (!IsDevice(h)) ReadHardware(h, data);
+                MergeDevices(data);
+                var s = SensorMap.Map(data); DeviceTelemetry.Fill(s); batteryReport.Apply(s); basic.Fill(s); s.Status = status; return s;
             }
             catch (Exception ex)
             {
                 Log.Write(ex);
-                var s = new Snapshot { Status = "传感器读取失败：" + Root(ex).Message };
-                basic.Fill(s); return s;
+                MergeDevices(data);
+                var s = SensorMap.Map(data); s.Status = "传感器读取失败：" + Root(ex).Message;
+                DeviceTelemetry.Fill(s); batteryReport.Apply(s); basic.Fill(s); return s;
             }
+        }
+        private static bool IsDevice(object hardware)
+        {
+            string type = Get(hardware, "HardwareType").ToString();
+            return type == "Battery" || type == "Storage" || type == "HDD";
+        }
+        private void ReadDevices(object owner)
+        {
+            DateTime nextBattery = DateTime.MinValue, nextStorage = DateTime.MinValue;
+            while (!stopDevices.WaitOne(0))
+            {
+                DateTime now = DateTime.UtcNow;
+                if (owner != null)
+                {
+                    bool batteryDue = now >= nextBattery, storageDue = now >= nextStorage;
+                    var batteries = new List<SensorReading>(); var drives = new List<SensorReading>();
+                    try
+                    {
+                        foreach (object hardware in (IEnumerable)Get(owner, "Hardware"))
+                        {
+                            string type = Get(hardware, "HardwareType").ToString();
+                            if ((type == "Battery" && batteryDue) || ((type == "Storage" || type == "HDD") && storageDue))
+                            {
+                                var readings = type == "Battery" ? batteries : drives;
+                                try { ReadHardware(hardware, readings); }
+                                catch (Exception ex)
+                                {
+                                    Log.Write(ex);
+                                    readings.Add(new SensorReading { Hardware = type, HardwareName = Get(hardware, "Name").ToString(),
+                                        HardwareId = Get(hardware, "Identifier").ToString(), Name = "Unavailable", Kind = "Status" });
+                                }
+                            }
+                        }
+                        lock (deviceGate)
+                        {
+                            if (batteryDue) { batterySensors = batteries; batteryUpdated = DateTime.UtcNow; }
+                            if (storageDue) { storageSensors = drives; storageUpdated = DateTime.UtcNow; }
+                        }
+                    }
+                    catch (Exception ex) { Log.Write(ex); }
+                    if (batteryDue) nextBattery = DateTime.UtcNow.AddSeconds(2);
+                    if (storageDue) nextStorage = DateTime.UtcNow.AddSeconds(10);
+                }
+                batteryReport.RefreshIfDue();
+                if (stopDevices.WaitOne(250)) return;
+            }
+        }
+        private void MergeDevices(List<SensorReading> data)
+        {
+            lock (deviceGate)
+            {
+                AppendCached(data, batterySensors, DateTime.UtcNow - batteryUpdated < TimeSpan.FromSeconds(10));
+                AppendCached(data, storageSensors, DateTime.UtcNow - storageUpdated < TimeSpan.FromSeconds(30));
+            }
+        }
+        private static void AppendCached(List<SensorReading> data, List<SensorReading> cached, bool fresh)
+        {
+            foreach (var sensor in cached)
+                data.Add(fresh ? sensor : new SensorReading { Hardware = sensor.Hardware, HardwareName = sensor.HardwareName,
+                    HardwareId = sensor.HardwareId, Id = sensor.Id, Kind = sensor.Kind, Name = sensor.Name, Value = null });
         }
         private static void ReadHardware(object h, List<SensorReading> data)
         {
@@ -93,7 +173,8 @@ namespace CarbonControl
             foreach (object v in (IEnumerable)Get(h, "Sensors"))
             {
                 object value = Get(v, "Value");
-                data.Add(new SensorReading { Hardware = Get(h, "HardwareType").ToString(), Kind = Get(v, "SensorType").ToString(),
+                data.Add(new SensorReading { Hardware = Get(h, "HardwareType").ToString(), HardwareName = Get(h, "Name").ToString(),
+                    HardwareId = Get(h, "Identifier").ToString(), Kind = Get(v, "SensorType").ToString(),
                     Name = Get(v, "Name").ToString(), Id = Get(v, "Identifier").ToString(), Value = value == null ? null : (double?)Convert.ToDouble(value) });
             }
             foreach (object sub in (IEnumerable)Get(h, "SubHardware")) ReadHardware(sub, data);
@@ -103,7 +184,16 @@ namespace CarbonControl
         private static void Call(object o, string n) { o.GetType().GetMethod(n, Type.EmptyTypes).Invoke(o, null); }
         private static Exception Root(Exception e) { return e.InnerException == null ? e : Root(e.InnerException); }
         public void Dispose()
-        { if (computer != null) { try { Call(computer, "Close"); } catch (Exception ex) { Log.Write(ex); } computer = null; } }
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+            stopDevices.Set();
+            object owner = Interlocked.Exchange(ref computer, null);
+            var worker = deviceWorker;
+            if (worker == null || worker.Join(2000)) { Close(owner); stopDevices.Dispose(); }
+            else ThreadPool.QueueUserWorkItem(delegate { worker.Join(); Close(owner); stopDevices.Dispose(); });
+        }
+        private static void Close(object owner)
+        { if (owner != null) try { Call(owner, "Close"); } catch (Exception ex) { Log.Write(ex); } }
     }
     // PawnIO device protocol; the signed ACPI module restricts port access to 0x62/0x66.
     internal interface IEcPort : IDisposable

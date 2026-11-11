@@ -2,13 +2,13 @@
 
 面向 **ThinkPad X1 Carbon Gen 8 / i5-10210U、i5-10310U** 的 Windows 温度监测与风扇管理工具。原生 WPF 界面，支持 Windows 10/11 x64、.NET Framework 4.8。
 
-[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.3.0.md)
+[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.0.md)
 
 ![监控总览，截图为示例数据](docs/images/monitor-dark.png)
 
 ## 使用
 
-1. 从 Releases 下载 `CarbonControl-v1.3.0-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
+1. 从 Releases 下载 `CarbonControl-v1.4.0-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
 2. 首次进入 **设置 → 配置硬件组件**，安装 LibreHardwareMonitor 0.9.6 与 PawnIO 2.2.0 官方组件。下载文件会校验 SHA-256。
 3. 组件检查通过后，应用会自动重启并返回设置页，加载最新的硬件组件和配置；也可点击 **管理员模式** 启动。
 4. 进入 **风扇策略**，选择预设，或直接拖动曲线节点后点击 **保存并应用**。
@@ -21,6 +21,9 @@ Release 包提供主程序和组件配置入口，硬件组件在首次配置时
 
 - 每秒刷新 CPU 温度、核心平均频率、整包功耗、使用率，以及 Intel 核显使用率和功耗。
 - 最近 60 秒温度趋势、风扇 RPM 与档位确认状态。
+- 电池健康度、循环次数、充放电功率和 60 秒功率趋势，以及容量、电压和预计续航。
+- SSD 温度、寿命剩余估计、累计读写与空间使用率，支持多个存储设备。
+- 低温办公、均衡、性能电源模式，与风扇曲线一起应用；退出时恢复原电源方案。
 - 系统自动、安静、均衡、强冷、自定义曲线和手动 0–7 档。
 - 拖动节点绘制曲线，支持 2–12 个节点、点击添加、右键删除、数值编辑与撤销/重做。
 - 三个可命名曲线存档，支持保存、覆盖、载入及直接应用。
@@ -32,6 +35,27 @@ Release 包提供主程序和组件配置入口，硬件组件在首次配置时
 ![风扇曲线与存档，截图为示例数据](docs/images/fan-dark.png)
 
 [查看浅色界面](docs/images/fan-light.png)
+
+## 电池、SSD 与性能模式
+
+电池页面每 2 秒更新，健康度取满充容量与设计容量的比值，循环次数从 Windows 电池报告补充。充放电功率表示电池端净功率，连接电源时会显示充电功率。电池报告在本地缓存，每 6 小时刷新一次。
+
+SSD 页面每 10 秒更新，显示各设备温度、寿命剩余估计、累计读写和空间使用率。寿命来自 SSD 提供的磨损数据，与剩余磁盘空间分开显示。设备没有提供的字段显示 `—`。电池和存储采样在独立线程运行。
+
+![电池监控，截图为示例数据](docs/images/battery-dark.png)
+
+总览上的四个按钮同时选择电源模式和风扇策略：
+
+| 模式 | 处理器睿频 | 风扇策略 |
+| --- | --- | --- |
+| 系统 | 恢复原电源方案 | 系统自动 |
+| 低温办公 | 关闭睿频 | 均衡曲线 |
+| 均衡 | 允许睿频 | 均衡曲线 |
+| 性能 | 请求积极睿频 | 强冷曲线 |
+
+电源设置分别应用到接电和电池状态，使用从当前方案复制的独立方案，读回确认后切换。实际频率由处理器和固件调节。风扇连接成功后应用联动曲线，之后仍可手动切换风扇策略。切回系统或正常退出时恢复原方案；异常退出会在下次启动时恢复，期间在 Windows 中手动选择的其他方案会继续保留。
+
+![SSD 监控，截图为示例数据](docs/images/storage-dark.png)
 
 ## 绘制与保存曲线
 
@@ -65,17 +89,17 @@ CPU 功耗读取 CPU Package，包含核显部分；GPU 功耗读取 Intel 图�
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test -Preview
 ```
 
-输出为 `dist\CarbonControl-v1.2\CarbonControl.exe`。测试报告为 `test-results.txt` 和 `ui-test-results.txt`，示例界面截图位于 `previews`。
+输出为 `dist\CarbonControl-v1.4\CarbonControl.exe`。测试报告为 `test-results.txt` 和 `ui-test-results.txt`，示例界面截图位于 `previews`。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.3.0
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.0
 ```
 
 发布包及 SHA-256 校验文件输出到 `release`。GitHub Actions 在推送 `v*` 标签时构建、运行测试并创建 Release。
 
 新版正式 Release 的程序包与校验文件验证成功后，会自动删除更早的正式 Release，下载页保留最新版本。
 
-当前包含 590 项逻辑断言及界面交互检查，覆盖首次安装后的组件加载、启动策略的等待与手动接管。硬件协议测试使用模拟端口，截图使用示例数据；具体机器的转速响应与超时频率需实机运行验证。
+672 项逻辑断言及界面交互检查覆盖组件加载、启动策略、风扇通信、电池与 SSD 字段映射、电源模式应用与恢复。协议和电源切换测试使用模拟后端，截图使用示例数据。
 
 源码位于 `src`，构建脚本为 `build.ps1`，硬件配置脚本为 `scripts/setup-hardware.ps1`。
 

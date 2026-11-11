@@ -230,6 +230,7 @@ namespace CarbonControl
     public class SensorReading
     {
         public string Hardware, Kind, Name, Id;
+        public string HardwareName, HardwareId;
         public double? Value;
     }
     public class Snapshot
@@ -238,6 +239,8 @@ namespace CarbonControl
         public double? CpuTemperature, CpuClock, CpuPower, CpuLoad, GpuLoad, GpuPower;
         public string Status = "正在连接传感器";
         public List<SensorReading> Sensors = new List<SensorReading>();
+        public List<BatteryReading> Batteries = new List<BatteryReading>();
+        public List<StorageReading> Drives = new List<StorageReading>();
     }
     public static class SensorMap
     {

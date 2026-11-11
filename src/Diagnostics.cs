@@ -39,9 +39,14 @@ namespace CarbonControl
             Log.DirectoryPath = Path.GetDirectoryName(Path.GetFullPath(output));
             try
             {
-                using (var monitor = new HardwareMonitor())
+                using (var monitor = new HardwareMonitor(Path.Combine(Log.DirectoryPath, "telemetry")))
                 {
-                    monitor.Read(); Thread.Sleep(1100); var s = monitor.Read();
+                    var s = monitor.Read();
+                    for (int i = 0; i < 8; i++)
+                    {
+                        Thread.Sleep(1000); s = monitor.Read();
+                        if (s.Batteries.Count > 0 && s.Drives.Count > 0 && s.CpuTemperature.HasValue) break;
+                    }
                     var text = new StringBuilder();
                     text.AppendLine("Read-only hardware diagnostic · " + DateTime.Now.ToString("s"));
                     text.AppendLine("Model: " + Machine.Model); text.AppendLine("CPU: " + Machine.Cpu);
@@ -50,6 +55,9 @@ namespace CarbonControl
                     text.AppendLine("CPU temperature: " + s.CpuTemperature); text.AppendLine("CPU package power: " + s.CpuPower);
                     text.AppendLine("GPU load: " + s.GpuLoad); text.AppendLine("GPU power: " + s.GpuPower);
                     foreach (var v in s.Sensors) text.AppendLine(v.Id + " | " + v.Name + " | " + v.Value);
+                    foreach (var b in s.Batteries) text.AppendLine("Battery: " + b.Name + " | State=" + b.State + " | Health=" + b.HealthPercent + "% | Cycles=" + b.CycleCount + " | Charge=" + b.ChargePowerW + "W | Discharge=" + b.DischargePowerW + "W");
+                    foreach (var d in s.Drives) text.AppendLine("Storage: " + d.Name + " | Temperature=" + d.Temperature + "C | Life remaining=" + d.HealthPercent + "% | Written=" + d.TotalWrittenGB + "GB");
+                    text.AppendLine("Power settings: " + PerformanceController.Probe());
                     text.AppendLine("No fan device opened; no EC writes."); File.WriteAllText(output, text.ToString(), Encoding.UTF8);
                 }
                 return 0;

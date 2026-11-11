@@ -1,4 +1,4 @@
-param([switch]$Test, [switch]$Preview, [string]$OutputDirectory = 'dist\CarbonControl-v1.2')
+param([switch]$Test, [switch]$Preview, [string]$OutputDirectory = 'dist\CarbonControl-v1.4')
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -7,6 +7,9 @@ $wpf = Join-Path $framework 'WPF'
 $out = Join-Path $PSScriptRoot $OutputDirectory
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 $previousApp = Join-Path $PSScriptRoot 'dist\CarbonControl'
+foreach ($candidate in @('dist\CarbonControl-v1.3','dist\CarbonControl-v1.2')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $previousApp 'hardware'))) { $previousApp = Join-Path $PSScriptRoot $candidate }
+}
 if (-not (Test-Path -LiteralPath (Join-Path $out 'hardware')) -and (Test-Path -LiteralPath (Join-Path $previousApp 'hardware'))) {
     Copy-Item -LiteralPath (Join-Path $previousApp 'hardware') -Destination $out -Recurse -Force
 }

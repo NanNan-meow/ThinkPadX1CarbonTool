@@ -67,7 +67,7 @@ namespace CarbonControl
             }
         }
     }
-    public sealed class MainUi : IDisposable
+    public sealed partial class MainUi : IDisposable
     {
         private readonly Window window;
         private readonly bool preview;
@@ -98,6 +98,7 @@ namespace CarbonControl
             using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("MainWindow.xaml")) window = (Window)XamlReader.Load(s);
             window.Icon = MakeWindowIcon();
             MakeCurveEditor(); BindButtons(); LoadCurve(settings.Curve); RefreshCurveSlots(); ApplyTheme(); Navigate("Monitor");
+            InitializeDeviceUi();
             Highlight("ModeBios", true);
             UpdateFullSpeedButtons();
             C<Slider>("ManualSlider").Value = settings.ManualLevel;
@@ -121,14 +122,14 @@ namespace CarbonControl
             window.StateChanged += (s, e) => { if (window.WindowState == WindowState.Minimized && !preview) window.Hide(); };
             T("MachineLabel", preview ? "ThinkPad X1 Carbon Gen 8 · Intel Core i5-10210U" : Machine.Model + " · " + Machine.Cpu);
             if (!preview) T("ModelCaption", Machine.Supported ? "Gen 8 · " + (Machine.Cpu.Contains("10310U") ? "i5-10310U" : "i5-10210U") : "目标 · X1 Carbon Gen 8");
-            if (!preview) { SystemEvents.PowerModeChanged += OnPower; SystemEvents.SessionEnding += OnSessionEnding; }
+            if (!preview) { SystemEvents.PowerModeChanged += OnPower; Application.Current.SessionEnding += OnSessionEnding; }
         }
         private TControl C<TControl>(string name) where TControl : class { return window.FindName(name) as TControl; }
         private void T(string name, string text) { C<TextBlock>(name).Text = text; }
         private void Click(string name, Action action) { C<Button>(name).Click += (s, e) => { try { action(); } catch (Exception ex) { Log.Write(ex); T("SettingsMessage", ex.Message); T("CurveMessage", ex.Message); } }; }
         private void BindButtons()
         {
-            foreach (string p in new[] { "Monitor", "Fan", "Settings" }) { string page = p; Click("Nav" + p, () => Navigate(page)); }
+            foreach (string p in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" }) { string page = p; Click("Nav" + p, () => Navigate(page)); }
             Click("GoFan", () => Navigate("Fan"));
             foreach (FanMode m in new[] { FanMode.Bios, FanMode.Quiet, FanMode.Balanced, FanMode.Cool, FanMode.Custom })
             { FanMode captured = m; Click("Mode" + m, () => SelectMode(captured)); }
@@ -206,7 +207,7 @@ namespace CarbonControl
         }
         private static bool IsAdmin() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         private void OnPower(object sender, PowerModeChangedEventArgs e) { if (engine != null && e.Mode != PowerModes.StatusChange) engine.Suspend(e.Mode == PowerModes.Suspend); }
-        private void OnSessionEnding(object sender, SessionEndingEventArgs e) { if (engine != null) engine.Dispose(); }
+        private void OnSessionEnding(object sender, System.Windows.SessionEndingCancelEventArgs e) { exiting = true; Dispose(); }
         private void Save() { if (!preview) settings.Save(settingsPath); }
         public void Run(bool minimized)
         {
@@ -239,7 +240,7 @@ namespace CarbonControl
         }
         private void Show() { window.Dispatcher.Invoke(() => { window.Show(); window.WindowState = WindowState.Normal; window.Activate(); }); }
         public void OpenSettings() { Navigate("Settings"); Show(); }
-        private bool SelectMode(FanMode mode, bool refreshDraft = true, bool fullSpeedRequest = false, bool startupRequest = false)
+        private bool SelectMode(FanMode mode, bool refreshDraft = true, bool fullSpeedRequest = false, bool startupRequest = false, bool performanceRequest = false)
         {
             settings.ManualLevel = (int)C<Slider>("ManualSlider").Value; Save();
             if (refreshDraft && mode != FanMode.Manual && mode != FanMode.Bios)
@@ -248,8 +249,10 @@ namespace CarbonControl
             { T("CurveMessage", "曲线可以继续编辑。" + engine.FanStatus); T("SettingsMessage", engine.FanStatus); return false; }
             if (engine != null) engine.Configure(mode, settings.ManualLevel, settings.Curve);
             if (!startupRequest) startupPolicyGate.Cancel();
+            if (!performanceRequest) pendingPerformanceFan = null;
             selectedMode = mode; isFullSpeed = fullSpeedRequest; UpdateFullSpeedButtons();
             if (mode == FanMode.Manual) appliedManualLevel = settings.ManualLevel;
+            UpdatePerformanceStatus();
             foreach (FanMode m in new[] { FanMode.Bios, FanMode.Quiet, FanMode.Balanced, FanMode.Cool, FanMode.Custom }) Highlight("Mode" + m, m == mode);
             Highlight("ApplyManual", mode == FanMode.Manual);
             T("PolicyDescription", fullSpeedRequest ? "全速模式 · 固定 7 档，再点一次返回原策略。" : mode == FanMode.Bios ? "由 ThinkPad 固件自动调节风扇。" : mode == FanMode.Manual ? "保持手动档位，最高档为 7 档。" : "当前策略：" + ModeLabels[(int)mode] + " · 根据 CPU 温度自动调整档位。");
@@ -354,14 +357,18 @@ namespace CarbonControl
             if (showEvent.WaitOne(0)) Show();
             var sample = engine.Current;
             bool fresh = (DateTime.UtcNow - sample.Timestamp).TotalSeconds <= 5;
+            RefreshPerformanceMode();
             TryApplyStartupPolicy(sample, engine.FanReady, engine.FanConfirmed, DateTime.UtcNow);
+            TryApplyPerformanceFan(sample, engine.FanReady, engine.FanConfirmed, DateTime.UtcNow);
             Present(fresh ? sample : new Snapshot { Status = "正在重新获取传感器数据" });
+            PresentDevices(fresh ? sample : new Snapshot());
             curveChart.CurrentTemperature = fresh ? sample.CpuTemperature : null;
             history.Add(fresh ? sample.CpuTemperature : null); if (history.Count > 60) history.RemoveAt(0);
             DrawHistory();
             string rpm = engine.FanRpm.HasValue ? engine.FanRpm.Value.ToString("N0") : "—";
             T("FanSummary", "风扇  " + rpm + " RPM"); T("FanActual", rpm + " RPM"); T("FanSummaryMode", engine.FanStatus);
             T("FanControlStatus", engine.FanStatus);
+            UpdatePerformanceStatus();
             T("ConnectionLabel", fresh ? sample.Status : "传感器数据已暂停"); T("HardwareStatus", sample.Status + "\n" + engine.FanStatus);
             T("TimeLabel", DateTime.Now.ToString("HH:mm:ss"));
             if (tray != null) tray.Text = "Carbon Control · " + Format(fresh ? sample.CpuTemperature : null, "0", "°C") + " · " + rpm + " RPM";
@@ -376,9 +383,9 @@ namespace CarbonControl
         private void Navigate(string page)
         {
             activePage = page;
-            foreach (string p in new[] { "Monitor", "Fan", "Settings" }) { C<StackPanel>(p + "Page").Visibility = p == page ? Visibility.Visible : Visibility.Collapsed; Highlight("Nav" + p, p == page); }
-            T("PageTitle", page == "Monitor" ? "监控总览" : page == "Fan" ? "风扇策略" : "设置");
-            T("PageSubtitle", page == "Monitor" ? "掌握温度，让性能从容发挥。" : page == "Fan" ? "从安静办公到持续高负载，由你掌控。" : "让 Carbon Control 按你的习惯运行。");
+            foreach (string p in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" }) { C<StackPanel>(p + "Page").Visibility = p == page ? Visibility.Visible : Visibility.Collapsed; Highlight("Nav" + p, p == page); }
+            T("PageTitle", page == "Monitor" ? "监控总览" : page == "Fan" ? "风扇策略" : page == "Battery" ? "电池" : page == "Storage" ? "SSD" : "设置");
+            T("PageSubtitle", page == "Monitor" ? "掌握温度，让性能从容发挥。" : page == "Fan" ? "从安静办公到持续高负载，由你掌控。" : page == "Battery" ? "关注电池状态，掌握每一瓦的去向。" : page == "Storage" ? "查看温度、寿命估计和累计读写。" : "让 Carbon Control 按你的习惯运行。");
             C<ScrollViewer>("PageScroll").ScrollToTop();
         }
         private void Highlight(string name, bool selected)
@@ -393,6 +400,7 @@ namespace CarbonControl
                 string[] colors = light ? new[] { "#F5F6F8", "#ECEEF1", "#FFFFFF", "#F1F3F5", "#E1E4E8", "#20242A", "#69727D", "#C53749", "#FCE9ED", "#218260" } : new[] { "#101214", "#151719", "#1B1E21", "#25292D", "#303439", "#F1F3F4", "#9AA2AB", "#F16470", "#382128", "#70CCA7" };
                 for (int i = 0; i < names.Length; i++) window.Resources[names[i]] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors[i]));
                 appliedTheme = key; DrawHistory(); DrawCurve();
+                DrawBatteryPower();
                 RefreshCurveSlots();
             }
             foreach (string theme in new[] { "System", "Light", "Dark" }) Highlight("Theme" + theme, settings.Theme == theme);
@@ -464,6 +472,7 @@ namespace CarbonControl
             var b = new StringBuilder(); b.AppendLine("Carbon Control " + Assembly.GetExecutingAssembly().GetName().Version.ToString(3) + " · " + DateTime.Now.ToString("s")); b.AppendLine("Model: " + Machine.Model); b.AppendLine("CPU: " + Machine.Cpu); b.AppendLine("Administrator: " + IsAdmin()); b.AppendLine(s.Status);
             if (engine != null) b.AppendLine("Fan: " + engine.FanStatus + "; RPM: " + engine.FanRpm + "; EC mode: " + engine.FanLevel);
             foreach (var v in s.Sensors) b.AppendLine(v.Id + " | " + v.Kind + " | " + v.Name + " | " + v.Value);
+            AppendDeviceReport(b, s);
             File.WriteAllText(dialog.FileName, b.ToString(), Encoding.UTF8); T("SettingsMessage", "检测报告已导出");
         }
         private static System.Drawing.Icon TrayIcon()
@@ -478,6 +487,8 @@ namespace CarbonControl
             // Render the content directly: an unshown Window has Hidden visibility.
             var root = (Grid)window.Content; window.Content = null; root.Resources = window.Resources;
             Present(new Snapshot { CpuTemperature = 54, CpuClock = 2.68, CpuPower = 12.4, CpuLoad = 28, GpuLoad = 16, GpuPower = 1.8 });
+            for (int i = 0; i < 60; i++) batteryPowerHistory.Add(-7.4 + Math.Sin(i * 0.24) * 1.6 + Math.Cos(i * 0.53) * 0.5);
+            PresentDevices(DevicePreview());
             T("FanSummary", "风扇  3,280 RPM"); T("FanSummaryMode", "均衡 · 2 档"); T("FanActual", "3,280 RPM"); T("ConnectionLabel", "界面预览 · 示例数据"); T("HardwareStatus", "界面预览 · 示例数据");
             T("FanControlStatus", "已确认 · 2 档");
             T("LiveLabel", "●  界面预览");
@@ -487,7 +498,7 @@ namespace CarbonControl
             foreach (string theme in new[] { "Dark", "Light" })
             {
                 settings.Theme = theme; ApplyTheme();
-                foreach (string page in new[] { "Monitor", "Fan", "Settings" })
+                foreach (string page in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" })
                 {
                     Navigate(page); root.Background = Brush("Bg"); root.Measure(new Size(1080, 790)); root.Arrange(new Rect(0, 0, 1080, 790)); root.UpdateLayout(); DrawHistory(); DrawCurve(); root.UpdateLayout();
                     var bitmap = new RenderTargetBitmap(1080, 790, 96, 96, PixelFormats.Pbgra32); bitmap.Render(root);
@@ -573,9 +584,10 @@ namespace CarbonControl
             if (scrollBar.Template.FindName("ScrollThumb", scrollBar) == null) throw new Exception("Custom scroll bar template");
             press("NavMonitor"); Present(new Snapshot()); if (C<TextBlock>("CpuTemp").Text != "— °C") throw new Exception("Missing sensor display");
             press("NavSettings"); root.Measure(new Size(960, 700)); root.Arrange(new Rect(0, 0, 960, 700)); root.UpdateLayout();
+            TestDeviceUi(root, press);
             press("Reconnect");
             if (!C<TextBlock>("SettingsMessage").Text.Contains("重新启动") || C<TextBlock>("SettingsMessage").Text.Contains("已重新连接")) throw new Exception("Reconnect does not claim unverified success");
-            File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, minimum-size layout.\r\n");
+            File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, battery/SSD pages, performance and fan linkage, minimum-size layout.\r\n");
         }
         private static TVisual FindVisual<TVisual>(DependencyObject parent) where TVisual : DependencyObject
         {
@@ -592,10 +604,11 @@ namespace CarbonControl
         {
             if (disposed) return; disposed = true;
             if (timer != null) timer.Stop();
+            if (performanceController != null) { try { performanceController.Dispose(); } catch (Exception ex) { Log.Write(ex); } }
             if (engine != null) engine.Dispose();
             if (tray != null) { tray.Visible = false; tray.Icon.Dispose(); tray.Dispose(); }
             if (showEvent != null) showEvent.Dispose();
-            if (!preview) { SystemEvents.PowerModeChanged -= OnPower; SystemEvents.SessionEnding -= OnSessionEnding; }
+            if (!preview) { SystemEvents.PowerModeChanged -= OnPower; Application.Current.SessionEnding -= OnSessionEnding; }
         }
     }
 }

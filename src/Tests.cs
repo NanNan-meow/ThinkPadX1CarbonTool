@@ -99,7 +99,9 @@ namespace CarbonControl
                 int pollingAssertions = FanPollingTests.Run();
                 int loadingAssertions = HardwareLoadingTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
                 int startupAssertions = StartupPolicyTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
-                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions + startupAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + "), startup policy (" + startupAssertions + ").\r\n"); return 0;
+                int performanceAssertions = PerformanceControlTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
+                int deviceAssertions = DeviceTelemetryTests.Run(Path.GetDirectoryName(Path.GetFullPath(output)));
+                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions + startupAssertions + performanceAssertions + deviceAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + "), startup policy (" + startupAssertions + "), power modes (" + performanceAssertions + "), battery/storage (" + deviceAssertions + ").\r\n"); return 0;
             }
             catch (Exception ex) { File.WriteAllText(output, ex.ToString()); return 1; }
         }
