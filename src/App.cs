@@ -297,7 +297,7 @@ namespace CarbonControl
             var points = curveDraft.Points; FanPolicy.Validate(points);
             settings.Curve = points.ToArray(); Save(); curveDraft.MarkSaved();
             bool applied = SelectMode(FanMode.Custom, false);
-            T("CurveMessage", applied ? "曲线已保存 · 正在应用，等待风扇读回" : "曲线已保存 · 尚未应用");
+            T("CurveMessage", applied ? "曲线已保存" : "曲线已保存 · 尚未应用");
         }
         private void RefreshCurveSlots()
         {

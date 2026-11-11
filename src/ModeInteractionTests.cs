@@ -39,6 +39,11 @@ namespace CarbonControl
             if (actionFeedback.Kind != ActionFeedbackKind.Pending) throw new Exception("Old fan revision accepted as new command");
             UpdateFanAction(0, FanMode.Manual, 4, true, "已应用", DateTime.UtcNow);
             if (actionFeedback.Kind != ActionFeedbackKind.Success || !actionFeedback.Text.Contains("4 档")) throw new Exception("Verified fan action feedback");
+            press("SaveCurve"); UpdateFanAction(0, FanMode.Custom, 2, true, "已应用", DateTime.UtcNow);
+            if (!C<TextBlock>("CurveMessage").Text.Contains("曲线已应用")) throw new Exception("Persistent curve readback feedback");
+            press("SaveCurve"); curveDraft.Select(2); curveDraft.MoveSelected(60, 3);
+            UpdateFanAction(0, FanMode.Custom, 2, true, "已应用", DateTime.UtcNow);
+            if (!C<TextBlock>("CurveMessage").Text.Contains("曲线已修改")) throw new Exception("Old curve readback overwrote a newer edit");
             press("NavSettings"); press("ThemeLight");
             if (actionFeedback.Kind != ActionFeedbackKind.Success || !actionFeedback.Text.Contains("浅色")) throw new Exception("Theme setting feedback");
             var caption = C<Border>("AppTitleBar");

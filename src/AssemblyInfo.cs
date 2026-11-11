@@ -5,6 +5,6 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("ThinkPad X1 Carbon Gen 8 temperature monitoring and fan control")]
 [assembly: AssemblyProduct("Carbon Control")]
 [assembly: AssemblyCompany("NanNan-meow")]
-[assembly: AssemblyVersion("1.4.3.0")]
-[assembly: AssemblyFileVersion("1.4.3.0")]
+[assembly: AssemblyVersion("1.4.4.0")]
+[assembly: AssemblyFileVersion("1.4.4.0")]
 [assembly: ComVisible(false)]

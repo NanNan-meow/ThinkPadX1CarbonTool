@@ -2,13 +2,13 @@
 
 面向 **ThinkPad X1 Carbon Gen 8 / i5-10210U、i5-10310U** 的 Windows 温度监测与风扇管理工具。原生 WPF 界面，支持 Windows 10/11 x64、.NET Framework 4.8。
 
-[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.3.md)
+[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.4.md)
 
 ![监控总览，截图为示例数据](docs/images/monitor-dark.png)
 
 ## 使用
 
-1. 从 Releases 下载 `CarbonControl-v1.4.3-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
+1. 从 Releases 下载 `CarbonControl-v1.4.4-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
 2. 首次进入 **设置 → 配置硬件组件**，安装 LibreHardwareMonitor 0.9.6 与 PawnIO 2.2.0 官方组件。下载文件会校验 SHA-256。
 3. 组件检查通过后，应用会自动重启并返回设置页，加载最新的硬件组件和配置；也可点击 **管理员模式** 启动。
 4. 进入 **风扇策略**，选择预设，或直接拖动曲线节点后点击 **保存并应用**。
@@ -100,7 +100,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test -Preview
 输出为 `dist\CarbonControl-v1.4\CarbonControl.exe`。测试报告为 `test-results.txt` 和 `ui-test-results.txt`，示例界面截图位于 `previews`。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.3
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.4
 ```
 
 发布包及 SHA-256 校验文件输出到 `release`。GitHub Actions 在推送 `v*` 标签时构建、运行测试并创建 Release。

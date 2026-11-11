@@ -58,11 +58,14 @@ namespace CarbonControl
                 }
                 string actual = mode == FanMode.Bios ? "系统自动" : level.HasValue ? "当前 " + (level.Value & 7) + " 档" : status;
                 actionFeedback.Complete(action.Token, true, action.Success + " · " + actual + " · 读回已确认", now);
+                if (action.Mode == FanMode.Custom && !curveDraft.IsDirty) T("CurveMessage", "曲线已应用 · " + actual + " · 读回已确认");
                 pendingFanAction = null;
             }
             else if (now - action.Started >= TimeSpan.FromSeconds(10))
             {
-                actionFeedback.Complete(action.Token, false, "风扇设置未确认 · " + status, now); pendingFanAction = null;
+                actionFeedback.Complete(action.Token, false, "风扇设置未确认 · " + status, now);
+                if (action.Mode == FanMode.Custom && !curveDraft.IsDirty) T("CurveMessage", "曲线已保存 · 应用未确认");
+                pendingFanAction = null;
             }
             RenderFeedback();
         }
