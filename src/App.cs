@@ -102,7 +102,7 @@ namespace CarbonControl
             windowFrame = new WindowFrame(window);
             window.Icon = MakeWindowIcon();
             MakeCurveEditor(); BindButtons(); LoadCurve(settings.Curve); RefreshCurveSlots(); ApplyTheme(); Navigate("Monitor");
-            InitializeDeviceUi();
+            InitializeDeviceUi(); InitializeModeDetails(); InitializeWindowCommands();
             Highlight("ModeBios", true);
             UpdateFullSpeedButtons();
             C<Slider>("ManualSlider").Value = settings.ManualLevel;
@@ -111,15 +111,21 @@ namespace CarbonControl
             C<CheckBox>("TrayCheck").IsChecked = settings.CloseToTray;
             C<CheckBox>("MinimizedCheck").IsChecked = settings.StartMinimized;
             C<CheckBox>("StartupCheck").IsChecked = !preview && StartupTask.IsEnabled();
-            C<CheckBox>("TrayCheck").Click += (s, e) => { settings.CloseToTray = C<CheckBox>("TrayCheck").IsChecked == true; Save(); };
-            C<CheckBox>("MinimizedCheck").Click += (s, e) => { settings.StartMinimized = C<CheckBox>("MinimizedCheck").IsChecked == true; Save(); };
+            C<CheckBox>("TrayCheck").Click += (s, e) => SavePreference(() => settings.CloseToTray = C<CheckBox>("TrayCheck").IsChecked == true, "关闭窗口后的托盘设置已保存");
+            C<CheckBox>("MinimizedCheck").Click += (s, e) => SavePreference(() => settings.StartMinimized = C<CheckBox>("MinimizedCheck").IsChecked == true, "启动时进入托盘的设置已保存");
             C<CheckBox>("StartupCheck").Click += async (s, e) =>
             {
                 if (updating || preview) return;
                 bool enabled = C<CheckBox>("StartupCheck").IsChecked == true;
-                try { await Task.Run(() => StartupTask.Set(enabled)); T("SettingsMessage", enabled ? "已设置开机启动" : "已关闭开机启动"); }
-                catch (Exception ex) { Log.Write(ex); T("SettingsMessage", "开机启动未设置 · 需要管理员权限"); }
-                updating = true; C<CheckBox>("StartupCheck").IsChecked = StartupTask.IsEnabled(); updating = false;
+                long feedback = BeginFeedback("正在设置开机启动…"); C<CheckBox>("StartupCheck").IsEnabled = false;
+                try
+                {
+                    await Task.Run(() => StartupTask.Set(enabled)); bool actual = StartupTask.IsEnabled();
+                    string message = actual == enabled ? enabled ? "已设置开机启动" : "已关闭开机启动" : "开机启动设置未确认";
+                    T("SettingsMessage", message); FinishFeedback(feedback, actual == enabled, message);
+                }
+                catch (Exception ex) { Log.Write(ex); T("SettingsMessage", "开机启动未设置 · 需要管理员权限"); FinishFeedback(feedback, false, "开机启动未设置 · 需要管理员权限"); }
+                finally { updating = true; C<CheckBox>("StartupCheck").IsChecked = StartupTask.IsEnabled(); updating = false; C<CheckBox>("StartupCheck").IsEnabled = true; }
             };
             C<Canvas>("HistoryChart").SizeChanged += (s, e) => DrawHistory();
             window.Closing += (s, e) => { if (!exiting && settings.CloseToTray && !preview) { e.Cancel = true; window.Hide(); } else if (!preview) Exit(); };
@@ -130,11 +136,10 @@ namespace CarbonControl
         }
         private TControl C<TControl>(string name) where TControl : class { return window.FindName(name) as TControl; }
         private void T(string name, string text) { C<TextBlock>(name).Text = text; }
-        private void Click(string name, Action action) { C<Button>(name).Click += (s, e) => { try { action(); } catch (Exception ex) { Log.Write(ex); T("SettingsMessage", ex.Message); T("CurveMessage", ex.Message); } }; }
+        private void Click(string name, Action action) { C<Button>(name).Click += (s, e) => { try { action(); } catch (Exception ex) { Log.Write(ex); T("SettingsMessage", ex.Message); T("CurveMessage", ex.Message); NotifyFeedback(false, "操作未完成 · " + ex.Message); } }; }
         private void BindButtons()
         {
-            foreach (string p in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" }) { string page = p; Click("Nav" + p, () => Navigate(page)); }
-            Click("GoFan", () => Navigate("Fan"));
+            foreach (string p in new[] { "Monitor", "Performance", "Fan", "Battery", "Storage", "Settings" }) { string page = p; Click("Nav" + p, () => Navigate(page)); }
             foreach (FanMode m in new[] { FanMode.Bios, FanMode.Quiet, FanMode.Balanced, FanMode.Cool, FanMode.Custom })
             { FanMode captured = m; Click("Mode" + m, () => SelectMode(captured)); }
             Click("RestoreBios", () => SelectMode(FanMode.Bios));
@@ -145,7 +150,7 @@ namespace CarbonControl
                 C<Slider>("ManualSlider").Value = Math.Min(7, level + 1); SelectMode(FanMode.Manual);
             });
             Click("BoostFan", () => SetFullSpeed());
-            Click("QuickFullSpeed", ToggleFullSpeed); Click("OverviewFullSpeed", ToggleFullSpeed);
+            Click("QuickFullSpeed", ToggleFullSpeed);
             Click("SaveCurve", ApplyDraft);
             Click("ResetCurve", () => { LoadCurve(FanPolicy.Preset(FanMode.Balanced)); T("CurveMessage", "已载入均衡曲线"); });
             Click("UndoCurve", () => curveDraft.Undo()); Click("RedoCurve", () => curveDraft.Redo());
@@ -157,27 +162,27 @@ namespace CarbonControl
             C<ComboBox>("CurveSlotPicker").SelectionChanged += (s, e) =>
             {
                 if (changingSlot || C<ComboBox>("CurveSlotPicker").SelectedIndex < 0) return;
-                settings.SelectedCurveSlot = C<ComboBox>("CurveSlotPicker").SelectedIndex;
-                UpdateSelectedSlot(); Save();
+                SavePreference(() => { settings.SelectedCurveSlot = C<ComboBox>("CurveSlotPicker").SelectedIndex; UpdateSelectedSlot(); }, "曲线存档已选中 · 载入后可编辑");
             };
             C<ComboBox>("StartupPolicyPicker").SelectionChanged += (s, e) =>
             {
                 if (changingStartupPolicy || C<ComboBox>("StartupPolicyPicker").SelectedIndex < 0) return;
-                settings.StartupPolicy = (StartupFanPolicy)C<ComboBox>("StartupPolicyPicker").SelectedIndex; Save();
-                T("SettingsMessage", "启动策略已保存");
+                SavePreference(() => settings.StartupPolicy = (StartupFanPolicy)C<ComboBox>("StartupPolicyPicker").SelectedIndex, "启动风扇策略已保存");
             };
             foreach (string theme in new[] { "System", "Light", "Dark" })
-            { string chosen = theme; Click("Theme" + theme, () => { settings.Theme = chosen; ApplyTheme(); Save(); }); }
+            { string chosen = theme; Click("Theme" + theme, () => { settings.Theme = chosen; ApplyTheme(); Save(); NotifyFeedback(true, chosen == "Light" ? "已切换浅色模式" : chosen == "Dark" ? "已切换深色模式" : "已设为跟随系统主题"); }); }
             Click("Elevate", () =>
             {
-                if (IsAdmin()) { T("SettingsMessage", "管理员模式已启用"); return; }
+                if (IsAdmin()) { T("SettingsMessage", "管理员模式已启用"); NotifyFeedback(true, "管理员模式已启用"); return; }
+                BeginFeedback("正在切换管理员模式…");
                 RestartApplication(true);
             });
-            Click("Reconnect", () => { T("SettingsMessage", "正在重启…"); RestartApplication(false); });
+            Click("Reconnect", () => { T("SettingsMessage", "正在重启…"); BeginFeedback("正在重新连接硬件并重启…"); RestartApplication(false); });
             C<Button>("InstallHardware").Click += async (s, e) =>
             {
                 if (preview) return;
                 C<Button>("InstallHardware").IsEnabled = false; T("SettingsMessage", "正在配置硬件组件…");
+                long feedback = BeginFeedback("正在配置硬件组件…");
                 try
                 {
                     string script = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "setup-hardware.ps1");
@@ -188,12 +193,13 @@ namespace CarbonControl
                         if (process.ExitCode == 0)
                         {
                             T("SettingsMessage", "组件已安装 · 正在重启");
+                            FinishFeedback(feedback, true, "硬件组件已安装 · 正在重启");
                             RestartApplication(!IsAdmin());
                         }
-                        else T("SettingsMessage", "组件配置未完成 · setup-hardware.log");
+                        else { T("SettingsMessage", "组件配置未完成 · setup-hardware.log"); FinishFeedback(feedback, false, "组件配置未完成 · 查看 setup-hardware.log"); }
                     }
                 }
-                catch (Exception ex) { T("SettingsMessage", ex.Message); Log.Write(ex); }
+                catch (Exception ex) { T("SettingsMessage", ex.Message); Log.Write(ex); FinishFeedback(feedback, false, "组件配置未完成 · " + ex.Message); }
                 finally { C<Button>("InstallHardware").IsEnabled = true; }
             };
             Click("ExportReport", ExportReport);
@@ -250,16 +256,17 @@ namespace CarbonControl
             if (refreshDraft && mode != FanMode.Manual && mode != FanMode.Bios)
                 LoadCurve(mode == FanMode.Custom ? (IList<CurvePoint>)settings.Curve : FanPolicy.Preset(mode));
             if (engine != null && !engine.FanReady && mode != FanMode.Bios)
-            { T("CurveMessage", "未应用 · " + engine.FanStatus); T("SettingsMessage", engine.FanStatus); return false; }
+            { T("CurveMessage", "未应用 · " + engine.FanStatus); T("SettingsMessage", engine.FanStatus); if (!startupRequest) NotifyFeedback(false, "风扇策略未应用 · " + engine.FanStatus); return false; }
             if (engine != null) engine.Configure(mode, settings.ManualLevel, settings.Curve);
             if (!startupRequest) startupPolicyGate.Cancel();
-            if (!performanceRequest) pendingPerformanceFan = null;
+            if (!performanceRequest) { pendingPerformanceFan = null; performanceFeedbackVersion = 0; }
             selectedMode = mode; isFullSpeed = fullSpeedRequest; UpdateFullSpeedButtons();
             if (mode == FanMode.Manual) appliedManualLevel = settings.ManualLevel;
             UpdatePerformanceStatus();
             foreach (FanMode m in new[] { FanMode.Bios, FanMode.Quiet, FanMode.Balanced, FanMode.Cool, FanMode.Custom }) Highlight("Mode" + m, m == mode);
             Highlight("ApplyManual", mode == FanMode.Manual);
             T("PolicyDescription", fullSpeedRequest ? "固定 7 档 · 再次点击返回" : mode == FanMode.Bios ? "系统自动调速" : mode == FanMode.Manual ? "手动档位" : ModeLabels[(int)mode] + " · 按 CPU 温度调速");
+            if (!startupRequest) TrackFanAction(mode, performanceRequest);
             return true;
         }
         private void ToggleFullSpeed()
@@ -280,7 +287,7 @@ namespace CarbonControl
         private void UpdateFullSpeedButtons()
         {
             string label = isFullSpeed ? "返回" + ModeLabels[(int)previousFullSpeedMode] : "全速 · 7 档";
-            foreach (string name in new[] { "QuickFullSpeed", "OverviewFullSpeed" })
+            foreach (string name in new[] { "QuickFullSpeed" })
             { var button = C<Button>(name); button.Content = label; Highlight(name, isFullSpeed); }
             if (fullSpeedTrayItem != null) { fullSpeedTrayItem.Checked = isFullSpeed; fullSpeedTrayItem.Text = isFullSpeed ? "返回" + ModeLabels[(int)previousFullSpeedMode] : "全速 · 7 档"; }
         }
@@ -290,7 +297,7 @@ namespace CarbonControl
             var points = curveDraft.Points; FanPolicy.Validate(points);
             settings.Curve = points.ToArray(); Save(); curveDraft.MarkSaved();
             bool applied = SelectMode(FanMode.Custom, false);
-            T("CurveMessage", applied ? "曲线已保存并应用" : "曲线已保存 · 等待风扇连接");
+            T("CurveMessage", applied ? "曲线已保存 · 正在应用，等待风扇读回" : "曲线已保存 · 尚未应用");
         }
         private void RefreshCurveSlots()
         {
@@ -347,12 +354,14 @@ namespace CarbonControl
             settings.SaveCurveSlot(index, C<TextBox>("CurveSlotName").Text, curveDraft.Points);
             Save(); curveDraft.MarkSaved(); RefreshCurveSlots();
             T("CurveMessage", "已保存到「" + settings.CurveSlots[index].Name + "」");
+            NotifyFeedback(true, "曲线已保存到「" + settings.CurveSlots[index].Name + "」");
         }
         private bool LoadCurveSlotCore()
         {
             int index = settings.SelectedCurveSlot;
             LoadCurve(settings.LoadCurveSlot(index));
             T("CurveMessage", "已载入「" + settings.CurveSlots[index].Name + "」");
+            NotifyFeedback(true, "曲线已载入编辑区，尚未应用");
             return true;
         }
         private void LoadCurveSlot() { LoadCurveSlotCore(); }
@@ -372,6 +381,9 @@ namespace CarbonControl
             string rpm = engine.FanRpm.HasValue ? engine.FanRpm.Value.ToString("N0") : "—";
             T("FanSummary", "风扇  " + rpm + " RPM"); T("FanActual", rpm + " RPM"); T("FanSummaryMode", engine.FanStatus);
             T("FanControlStatus", engine.FanStatus);
+            var confirmation = engine.ReadFanConfirmation();
+            UpdateFanAction(confirmation.Revision, confirmation.Mode, confirmation.Level,
+                confirmation.Ready && confirmation.Confirmed, confirmation.Status, DateTime.UtcNow);
             UpdatePerformanceStatus();
             T("ConnectionLabel", fresh ? sample.Status : "等待传感器数据"); T("HardwareStatus", sample.Status + "\n" + engine.FanStatus);
             T("TimeLabel", DateTime.Now.ToString("HH:mm:ss"));
@@ -388,10 +400,11 @@ namespace CarbonControl
         private void Navigate(string page)
         {
             activePage = page;
-            foreach (string p in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" }) { C<StackPanel>(p + "Page").Visibility = p == page ? Visibility.Visible : Visibility.Collapsed; Highlight("Nav" + p, p == page); }
-            T("PageTitle", page == "Monitor" ? "监控总览" : page == "Fan" ? "风扇策略" : page == "Battery" ? "电池" : page == "Storage" ? "SSD" : "设置");
-            T("PageSubtitle", page == "Monitor" ? "CPU、GPU 与风扇实时监控。" : page == "Fan" ? "预设、手动档位与自定义曲线。" : page == "Battery" ? "电量、容量与充放电功率。" : page == "Storage" ? "温度、寿命与累计读写。" : "外观、启动与硬件连接。");
+            foreach (string p in new[] { "Monitor", "Performance", "Fan", "Battery", "Storage", "Settings" }) { C<StackPanel>(p + "Page").Visibility = p == page ? Visibility.Visible : Visibility.Collapsed; Highlight("Nav" + p, p == page); }
+            T("PageTitle", page == "Monitor" ? "监控总览" : page == "Performance" ? "性能模式" : page == "Fan" ? "风扇策略" : page == "Battery" ? "电池" : page == "Storage" ? "SSD" : "设置");
+            T("PageSubtitle", page == "Monitor" ? "CPU、GPU 与风扇实时监控。" : page == "Performance" ? "选择模式、查看设置与实际读回。" : page == "Fan" ? "预设、手动档位与自定义曲线。" : page == "Battery" ? "电量、容量与充放电功率。" : page == "Storage" ? "温度、寿命与累计读写。" : "外观、启动与硬件连接。");
             C<ScrollViewer>("PageScroll").ScrollToTop();
+            RenderFeedback();
         }
         private void Highlight(string name, bool selected)
         { var b = C<Button>(name); b.SetResourceReference(Control.BackgroundProperty, selected ? "AccentSoft" : name.StartsWith("Nav") ? "Sidebar" : "Input"); b.SetResourceReference(Control.ForegroundProperty, selected ? "Accent" : "Text"); }
@@ -444,7 +457,7 @@ namespace CarbonControl
         {
             int t, l;
             if (!int.TryParse(C<TextBox>("SelectedTemperature").Text, out t) || !int.TryParse(C<TextBox>("SelectedLevel").Text, out l))
-            { T("CurveMessage", "温度和档位需为整数"); return false; }
+            { T("CurveMessage", "温度和档位需为整数"); NotifyFeedback(false, "温度和档位需为整数"); return false; }
             curveDraft.MoveSelected(t, l); UpdateCurveEditor(); return true;
         }
         private void AddCurvePoint()
@@ -481,6 +494,7 @@ namespace CarbonControl
             AppendDeviceReport(b, s);
             AppendCpuLimits(b, s);
             File.WriteAllText(dialog.FileName, b.ToString(), Encoding.UTF8); T("SettingsMessage", "检测报告已导出");
+            NotifyFeedback(true, "检测报告已导出");
         }
         private static System.Drawing.Icon TrayIcon()
         {
@@ -496,7 +510,7 @@ namespace CarbonControl
             Present(new Snapshot { CpuTemperature = 54, CpuClock = 2.68, CpuPower = 12.4, CpuLoad = 28, GpuLoad = 16, GpuPower = 1.8,
                 CpuLimits = new CpuLimitReading { LongPowerW = 15, ShortPowerW = 44, TimeWindowSeconds = 28, LongEnabled = true, ShortEnabled = true,
                     ThermalThrottling = false, PowerThrottling = false, Source = "封装 MSR" },
-                CpuPolicy = new CpuPolicyReading { BoostMode = 2, MaximumFrequencyMhz = 0, OnAcPower = true } });
+                CpuPolicy = new CpuPolicyReading { BoostMode = 2, MaximumFrequencyMhz = 0, OnAcPower = true, Timestamp = DateTime.UtcNow } });
             for (int i = 0; i < 60; i++) batteryPowerHistory.Add(-7.4 + Math.Sin(i * 0.24) * 1.6 + Math.Cos(i * 0.53) * 0.5);
             PresentDevices(DevicePreview());
             T("FanSummary", "风扇  3,280 RPM"); T("FanSummaryMode", "均衡 · 2 档"); T("FanActual", "3,280 RPM"); T("ConnectionLabel", "界面预览 · 示例数据"); T("HardwareStatus", "界面预览 · 示例数据");
@@ -508,12 +522,20 @@ namespace CarbonControl
             foreach (string theme in new[] { "Dark", "Light" })
             {
                 settings.Theme = theme; ApplyTheme();
-                foreach (string page in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" })
+                foreach (string page in new[] { "Monitor", "Performance", "Fan", "Battery", "Storage", "Settings" })
                 {
                     Navigate(page); root.Background = Brush("Bg"); root.Measure(new Size(1080, 790)); root.Arrange(new Rect(0, 0, 1080, 790)); root.UpdateLayout(); DrawHistory(); DrawCurve(); root.UpdateLayout();
                     var bitmap = new RenderTargetBitmap(1080, 790, 96, 96, PixelFormats.Pbgra32); bitmap.Render(root);
                     var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
                     using (var f = File.Create(System.IO.Path.Combine(directory, page + "-" + theme + ".png"))) png.Save(f);
+                    if (page == "Performance")
+                    {
+                        C<Expander>("ModeDetailsExpander").IsExpanded = true; root.Measure(new Size(1080, 790)); root.Arrange(new Rect(0, 0, 1080, 790)); root.UpdateLayout();
+                        var detailed = new RenderTargetBitmap(1080, 790, 96, 96, PixelFormats.Pbgra32); detailed.Render(root);
+                        var detailPng = new PngBitmapEncoder(); detailPng.Frames.Add(BitmapFrame.Create(detailed));
+                        using (var f = File.Create(System.IO.Path.Combine(directory, "Performance-Details-" + theme + ".png"))) detailPng.Save(f);
+                        C<Expander>("ModeDetailsExpander").IsExpanded = false;
+                    }
                 }
             }
         }
@@ -574,7 +596,7 @@ namespace CarbonControl
             press("ModeBalanced"); curveDraft.Select(2); curveDraft.MoveSelected(60, 3);
             string draftBeforeBoost = string.Join(";", curveDraft.Points.Select(x => x.Temperature + ":" + x.Level));
             press("QuickFullSpeed"); if (!isFullSpeed || selectedMode != FanMode.Manual || C<Slider>("ManualSlider").Value != 7) throw new Exception("Top full-speed shortcut");
-            press("OverviewFullSpeed"); if (isFullSpeed || selectedMode != FanMode.Balanced) throw new Exception("Full speed returns to previous curve policy");
+            press("QuickFullSpeed"); if (isFullSpeed || selectedMode != FanMode.Balanced) throw new Exception("Full speed returns to previous curve policy");
             if (draftBeforeBoost != string.Join(";", curveDraft.Points.Select(x => x.Temperature + ":" + x.Level))) throw new Exception("Full speed preserves edited curve");
             C<Slider>("ManualSlider").Value = 3; press("ApplyManual"); C<Slider>("ManualSlider").Value = 5;
             using (var trayMenu = CreateTrayMenu())
@@ -594,10 +616,10 @@ namespace CarbonControl
             if (scrollBar.Template.FindName("ScrollThumb", scrollBar) == null) throw new Exception("Custom scroll bar template");
             press("NavMonitor"); Present(new Snapshot()); if (C<TextBlock>("CpuTemp").Text != "— °C") throw new Exception("Missing sensor display");
             press("NavSettings"); root.Measure(new Size(960, 700)); root.Arrange(new Rect(0, 0, 960, 700)); root.UpdateLayout();
-            TestDeviceUi(root, press); TestCpuLimitUi();
+            TestDeviceUi(root, press); TestCpuLimitUi(); TestModeInteractionUi(root, press);
             press("Reconnect");
             if (C<TextBlock>("SettingsMessage").Text != "正在重启…") throw new Exception("Reconnect progress status");
-            File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, battery/SSD pages, performance and fan linkage, live CPU limit fields, minimum-size layout.\r\n");
+            File.WriteAllText(output, "PASS: startup strategy and manual override, named slots, fan/full-speed shortcuts, curve editing, reconnect status, battery/SSD pages, read-only monitor, dedicated performance page and mode definitions, fresh CPU policy readback, revision-verified setting feedback, themed client title bar, minimum-size layout.\r\n");
         }
         private static TVisual FindVisual<TVisual>(DependencyObject parent) where TVisual : DependencyObject
         {

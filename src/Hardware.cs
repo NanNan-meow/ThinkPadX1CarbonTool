@@ -114,6 +114,8 @@ namespace CarbonControl
             try { sample.CpuLimits = cpuLimits.Read(); } catch (Exception ex) { Log.Write(ex); }
             try { sample.CpuPolicy = cpuPolicy.Read(); } catch (Exception ex) { Log.Write(ex); }
         }
+        public void InvalidateCpuLimits()
+        { cpuLimits.Invalidate(); cpuPolicy.Invalidate(); }
         private static bool IsDevice(object hardware)
         {
             string type = Get(hardware, "HardwareType").ToString();

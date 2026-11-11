@@ -148,12 +148,21 @@ namespace CarbonControl
             policy.Reset();
         }
     }
+    public sealed class FanConfirmationReading
+    {
+        public int Revision;
+        public FanMode Mode;
+        public int? Level;
+        public bool Ready, Confirmed;
+        public string Status;
+    }
     public sealed class Engine : IDisposable
     {
         private readonly object gate = new object();
         private readonly ManualResetEvent stop = new ManualResetEvent(false);
         private readonly ManualResetEvent suspendAck = new ManualResetEvent(false);
         private readonly AutoResetEvent configurationChanged = new AutoResetEvent(false);
+        private readonly AutoResetEvent sensorRefresh = new AutoResetEvent(false);
         private Thread sensorThread, fanThread;
         private Snapshot current = new Snapshot();
         private FanMode mode = FanMode.Bios;
@@ -161,6 +170,8 @@ namespace CarbonControl
         private List<CurvePoint> curve = FanPolicy.Preset(FanMode.Balanced);
         private bool suspended;
         private int configurationRevision;
+        private int confirmedConfigurationRevision = -1, cpuRefreshRevision;
+        private bool disposeRequested, sensorRefreshDisposed;
         public string FanStatus = "风扇连接中";
         public int? FanRpm, FanLevel;
         public bool FanReady;
@@ -168,11 +179,54 @@ namespace CarbonControl
         public bool Stopped { get { return (fanThread == null || !fanThread.IsAlive) && (sensorThread == null || !sensorThread.IsAlive); } }
         public Snapshot Current { get { lock (gate) return current; } }
         public FanMode Mode { get { lock (gate) return mode; } }
+        public int ConfigurationRevision { get { lock (gate) return configurationRevision; } }
+        public int ConfirmedConfigurationRevision { get { lock (gate) return confirmedConfigurationRevision; } }
+        public FanConfirmationReading ReadFanConfirmation()
+        {
+            lock (gate)
+            {
+                return new FanConfirmationReading { Revision = confirmedConfigurationRevision, Mode = mode,
+                    Level = FanLevel, Ready = FanReady, Confirmed = FanConfirmed, Status = FanStatus };
+            }
+        }
+        internal void UpdateConfigurationConfirmation(FanMode selected, int revision, FanController controller)
+        {
+            bool confirmed = controller.Healthy && controller.ActualLevel.HasValue &&
+                (selected == FanMode.Bios ? !controller.OwnsFan && (controller.ActualLevel.Value & 128) != 0 :
+                    controller.OwnsFan && (controller.ActualLevel.Value & 0xC0) == 0);
+            lock (gate)
+            {
+                if (disposeRequested) { ClearFanConfirmation(); return; }
+                FanReady = true; FanStatus = controller.Status;
+                FanRpm = controller.Healthy ? controller.Rpm : null;
+                FanLevel = controller.Healthy ? controller.ActualLevel : null;
+                FanConfirmed = !suspended && configurationRevision == revision && mode == selected && confirmed;
+                confirmedConfigurationRevision = FanConfirmed ? revision : -1;
+            }
+        }
+        // Caller holds gate so acknowledgement and telemetry are withdrawn together.
+        private void ClearFanConfirmation()
+        { FanReady = false; FanConfirmed = false; confirmedConfigurationRevision = -1; FanRpm = null; FanLevel = null; }
         public void Configure(FanMode m, int level, IList<CurvePoint> c)
-        { FanPolicy.Validate(c); lock (gate) { mode = m; manual = level; curve = c.Select(p => new CurvePoint(p.Temperature, p.Level)).ToList(); configurationRevision++; } configurationChanged.Set(); }
+        { FanPolicy.Validate(c); lock (gate) { mode = m; manual = level; curve = c.Select(p => new CurvePoint(p.Temperature, p.Level)).ToList(); configurationRevision++; FanConfirmed = false; confirmedConfigurationRevision = -1; } configurationChanged.Set(); }
+        public void RefreshCpuLimits()
+        {
+            lock (gate)
+            {
+                if (disposeRequested) return;
+                cpuRefreshRevision++;
+                sensorRefresh.Set();
+            }
+        }
         public void Suspend(bool value)
         {
-            suspendAck.Reset(); lock (gate) { suspended = value; current = new Snapshot(); configurationRevision++; }
+            suspendAck.Reset();
+            lock (gate)
+            {
+                if (disposeRequested) return;
+                suspended = value; current = new Snapshot(); configurationRevision++; FanConfirmed = false; confirmedConfigurationRevision = -1;
+                cpuRefreshRevision++; sensorRefresh.Set();
+            }
             configurationChanged.Set();
             if (value && fanThread != null && fanThread.IsAlive) suspendAck.WaitOne(2000);
         }
@@ -187,14 +241,31 @@ namespace CarbonControl
             try
             {
                 using (var monitor = new HardwareMonitor())
+                {
+                    int refreshedRevision = -1;
                     while (!stop.WaitOne(0))
                     {
-                        bool pause; lock (gate) pause = suspended;
-                        if (!pause) { var s = monitor.Read(); lock (gate) current = s; }
-                        if (stop.WaitOne(1000)) break;
+                        bool pause; int refreshRevision;
+                        lock (gate) { pause = suspended; refreshRevision = cpuRefreshRevision; }
+                        if (!pause)
+                        {
+                            if (refreshRevision != refreshedRevision) { monitor.InvalidateCpuLimits(); refreshedRevision = refreshRevision; }
+                            var s = monitor.Read();
+                            // A request arriving during the read must not publish the old policy.
+                            lock (gate) { if (!suspended && refreshRevision == cpuRefreshRevision) current = s; }
+                        }
+                        if (WaitHandle.WaitAny(new WaitHandle[] { stop, sensorRefresh }, 1000) == 0) break;
                     }
+                }
             }
             catch (Exception ex) { Log.Write(ex); lock (gate) current = new Snapshot { Status = ex.Message }; }
+            finally
+            {
+                lock (gate)
+                {
+                    if (disposeRequested && !sensorRefreshDisposed) { sensorRefresh.Dispose(); sensorRefreshDisposed = true; }
+                }
+            }
         }
         private void Fans()
         {
@@ -202,7 +273,7 @@ namespace CarbonControl
             int appliedRevision = -1;
             try
             {
-                device = new ThinkPadFan(); controller = new FanController(device); FanReady = true;
+                device = new ThinkPadFan(); controller = new FanController(device); lock (gate) FanReady = true;
                 while (!stop.WaitOne(0))
                 {
                     FanMode selected; int level, revision; List<CurvePoint> points; Snapshot s;
@@ -212,16 +283,15 @@ namespace CarbonControl
                     // A successful control iteration renews the watchdog lease.
                     controller.Tick(selected, level, points, s, DateTime.UtcNow);
                     if (watchdog != null && controller.Healthy) watchdog.Pulse();
-                    FanStatus = controller.Status; FanRpm = controller.Rpm; FanLevel = controller.ActualLevel;
-                    FanConfirmed = controller.Healthy && controller.ActualLevel.HasValue;
+                    UpdateConfigurationConfirmation(selected, revision, controller);
                     if (selected == FanMode.Bios && !controller.OwnsFan) suspendAck.Set();
                     if (WaitHandle.WaitAny(new WaitHandle[] { stop, configurationChanged }, 1000) == 0) break;
                 }
             }
-            catch (Exception ex) { FanReady = false; FanConfirmed = false; FanStatus = ex.Message; Log.Write(ex); }
+            catch (Exception ex) { lock (gate) { ClearFanConfirmation(); FanStatus = ex.Message; } Log.Write(ex); }
             finally
             {
-                FanConfirmed = false;
+                lock (gate) ClearFanConfirmation();
                 bool restored = true;
                 if (controller != null) { try { controller.Restore(); } catch (Exception ex) { restored = false; Log.Write(ex); } }
                 if (watchdog != null) watchdog.Close(restored);
@@ -229,7 +299,16 @@ namespace CarbonControl
             }
         }
         public void Dispose()
-        { stop.Set(); if (fanThread != null) fanThread.Join(3000); if (sensorThread != null) sensorThread.Join(1500); }
+        {
+            lock (gate) { disposeRequested = true; ClearFanConfirmation(); stop.Set(); }
+            if (fanThread != null) fanThread.Join(3000);
+            if (sensorThread != null) sensorThread.Join(1500);
+            lock (gate)
+            {
+                if (!sensorRefreshDisposed && (sensorThread == null || !sensorThread.IsAlive))
+                { sensorRefresh.Dispose(); sensorRefreshDisposed = true; }
+            }
+        }
     }
     public sealed class Watchdog
     {

@@ -11,11 +11,13 @@ namespace CarbonControl
         {
             var limits = sample.CpuLimits ?? new CpuLimitReading();
             var policy = sample.CpuPolicy ?? new CpuPolicyReading();
+            bool fresh = !cpuPolicyRefreshRequested.HasValue || policy.Timestamp >= cpuPolicyRefreshRequested.Value;
+            if (fresh) { cpuPolicyRefreshRequested = null; displayedCpuPolicy = policy; }
             T("CpuLimitPl1", LimitPower(limits.LongPowerW, limits.LongEnabled));
             T("CpuLimitPl2", LimitPower(limits.ShortPowerW, limits.ShortEnabled));
             T("CpuLimitTau", Format(limits.TimeWindowSeconds, "0.##", "s"));
-            T("CpuLimitBoost", CpuPolicyMonitor.BoostLabel(policy.BoostMode));
-            T("CpuLimitFrequency", !policy.MaximumFrequencyMhz.HasValue ? "—" : policy.MaximumFrequencyMhz == 0 ? "系统调节" :
+            T("CpuLimitBoost", fresh ? CpuPolicyMonitor.BoostLabel(policy.BoostMode) : "读取中");
+            T("CpuLimitFrequency", !fresh ? "读取中" : !policy.MaximumFrequencyMhz.HasValue ? "—" : policy.MaximumFrequencyMhz == 0 ? "系统调节" :
                 (policy.MaximumFrequencyMhz.Value / 1000.0).ToString("0.##", CultureInfo.InvariantCulture) + " GHz");
             string activity = limits.ThermalThrottling == true && limits.PowerThrottling == true ? "温度 / 功耗限制" :
                 limits.ThermalThrottling == true ? "温度限制" : limits.PowerThrottling == true ? "功耗限制" :
@@ -25,7 +27,9 @@ namespace CarbonControl
             string supply = policy.OnAcPower == true ? "接电" : policy.OnAcPower == false ? "电池" : "";
             string source = string.IsNullOrEmpty(limits.Source) ? supply : limits.Source + (supply.Length == 0 ? "" : " · " + supply);
             if (limits.Locked == true) source += " · 已锁定";
+            source += !fresh ? " · 刷新中" : policy.Timestamp == DateTime.MinValue ? "" : " · 读取 " + policy.Timestamp.ToLocalTime().ToString("HH:mm:ss");
             T("CpuLimitSource", source);
+            UpdateModeDetails();
         }
         private static string LimitPower(double? watts, bool? enabled)
         { return enabled == false ? "未启用" : Format(watts, "0.##", "W"); }

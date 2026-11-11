@@ -66,6 +66,14 @@ namespace CarbonControl
             try { return backend.TryRead(index, out value) && value != ulong.MaxValue; }
             catch { return false; }
         }
+        public void Invalidate()
+        {
+            lock (gate)
+            {
+                if (disposed) return;
+                cached = null;
+            }
+        }
         internal static CpuLimitReading Decode(ulong? units, ulong? limits, ulong? thermal, uint? thermalFeatures)
         {
             var reading = new CpuLimitReading();

@@ -33,6 +33,9 @@ namespace CarbonControl
         }
         private void ApplyPerformance(PerformanceMode mode)
         {
+            long feedback = BeginFeedback("正在应用" + PerformanceProfiles.Get(mode).Name + "模式，等待设置与风扇读回…");
+            performanceFeedbackVersion = feedback;
+            pendingFanAction = null;
             try
             {
                 if (!preview)
@@ -41,13 +44,15 @@ namespace CarbonControl
                     performanceController.Apply(mode);
                 }
                 performanceError = null; performanceUiMode = mode;
-                pendingPerformanceFan = mode == PerformanceMode.System ? FanMode.Bios : mode == PerformanceMode.Performance ? FanMode.Cool : FanMode.Balanced;
+                pendingPerformanceFan = PerformanceProfiles.Get(mode).Fan;
+                feedback = BeginFeedback(PerformanceProfiles.Get(mode).Name + "：电源设置已确认 · 等待风扇与温度读回"); performanceFeedbackVersion = feedback;
                 startupPolicyGate.Cancel();
+                RequestCpuPolicyRefresh();
                 var sample = engine == null ? new Snapshot() : engine.Current;
                 TryApplyPerformanceFan(sample, engine != null && engine.FanReady, engine != null && engine.FanConfirmed, DateTime.UtcNow);
                 UpdatePerformanceStatus();
             }
-            catch (Exception ex) { Log.Write(ex); performanceError = ex.Message; UpdatePerformanceStatus(); }
+            catch (Exception ex) { Log.Write(ex); performanceError = PerformanceProfiles.Get(mode).Name + "：" + ex.Message; pendingFanAction = null; performanceFeedbackVersion = 0; FinishFeedback(feedback, false, "模式未应用 · " + performanceError); UpdatePerformanceStatus(); }
         }
         private void TryApplyPerformanceFan(Snapshot sample, bool ready, bool confirmed, DateTime now)
         {
@@ -64,7 +69,12 @@ namespace CarbonControl
             {
                 performanceController.RefreshActiveMode();
                 if (performanceUiMode != performanceController.Mode)
-                { performanceUiMode = performanceController.Mode; pendingPerformanceFan = null; }
+                {
+                    long previous = performanceFeedbackVersion;
+                    performanceUiMode = performanceController.Mode; pendingPerformanceFan = null; performanceFeedbackVersion = 0;
+                    if (pendingFanAction != null && pendingFanAction.Token == previous) pendingFanAction = null;
+                    FinishFeedback(previous, false, "Windows 电源方案已改变 · 之前的模式操作已取消");
+                }
             }
             catch (Exception ex) { Log.Write(ex); }
         }
@@ -78,6 +88,7 @@ namespace CarbonControl
                 performanceUiMode == PerformanceMode.Balanced ? "均衡 · 允许睿频" : "性能 · 积极睿频";
             status.Text = performanceError != null ? "未应用：" + performanceError : label +
                 (pendingPerformanceFan.HasValue ? " · 等待风扇连接" : " · 风扇" + ModeLabels[(int)selectedMode]);
+            UpdateModeDetails();
         }
         private void PresentDevices(Snapshot sample)
         {

@@ -63,6 +63,8 @@ namespace CarbonControl
                 return reading.Copy();
             }
         }
+        public void Invalidate()
+        { lock (gate) cached = null; }
         private static void SetPowerSource(CpuPolicyReading reading, byte? line)
         { reading.OnAcPower = ParsePowerSource(line); reading.SchemeName = SourceName(reading.OnAcPower); }
         private static bool? ParsePowerSource(byte? line)

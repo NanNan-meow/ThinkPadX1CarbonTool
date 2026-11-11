@@ -137,6 +137,15 @@ namespace CarbonControl
             Assert(wrapper.MisleadingReads == 0, "wrapper convenience ReadMsr is never used");
             native.Dispose(); native.Dispose();
             Assert(wrapper.Closes == 1, "native wrapper is closed exactly once");
+            fake = new FakeBackend { ThermalFeatures = 0x50 };
+            fake.Values[0x606] = units; fake.Values[0x610] = limits; fake.Values[0x1B1] = 0;
+            monitor = new CpuLimitMonitor(() => fake, () => now); monitor.Read();
+            fake.Values[0x610] = 160UL | (1UL << 15); monitor.Invalidate();
+            Assert(fake.Reads == 3, "limit invalidation performs no hardware reads");
+            Assert(Near(monitor.Read().LongPowerW, 20) && fake.Reads == 6, "requested refresh bypasses the two-second hardware cache");
+            fake.ThrowReads = true; monitor.Invalidate(); reading = monitor.Read();
+            Assert(!reading.LongPowerW.HasValue && !reading.ThermalThrottling.HasValue, "failed immediate read does not retain old hardware limits");
+            monitor.Dispose(); monitor.Invalidate();
             return assertions;
         }
     }

@@ -29,6 +29,15 @@ namespace CarbonControl
             public void Rename(Guid scheme, string name) { Mutations++; throw new Exception("Unexpected mutation"); }
             public void Delete(Guid scheme) { Mutations++; throw new Exception("Unexpected mutation"); }
         }
+        private sealed class FakeFan : IFanDevice
+        {
+            public int Level = 128;
+            public bool FailWrite, FailRead;
+            public int ReadLevel() { if (FailRead) throw new IOException("read failed"); return Level; }
+            public int? ReadRpm() { return 3000; }
+            public void SetLevel(int level) { if (level != 128 && FailWrite) throw new IOException("write failed"); Level = level; }
+            public void Dispose() { }
+        }
         public static int Run()
         {
             count = 0;
@@ -85,7 +94,71 @@ namespace CarbonControl
             Assert(CpuPolicyMonitor.BoostLabel(null) == "—" && CpuPolicyMonitor.BoostLabel(99) == "—", "unknown boost enum is not presented as disabled");
             Assert(CpuPolicyMonitor.FrequencyLabel(0) == "系统调节", "zero maximum frequency is system-controlled");
             Assert(CpuPolicyMonitor.FrequencyLabel(3200) == "3.20 GHz" && CpuPolicyMonitor.FrequencyLabel(null) == "—", "MHz converted to GHz with unknown value preserved");
+            fake = new FakePolicy(); monitor = new CpuPolicyMonitor(fake, () => (byte?)1, () => now);
+            monitor.Read(); fake.Values.AcBoost = 0; fake.Values.AcFrequency = 0; monitor.Invalidate();
+            Assert(fake.ValueReads == 1, "invalidating only clears the cache without native reads");
+            var immediate = monitor.Read();
+            Assert(immediate.BoostMode == 0 && immediate.MaximumFrequencyMhz == 0 && fake.ValueReads == 2, "mode change can reread policy without waiting two seconds");
+            fake.Fail = true; monitor.Invalidate(); immediate = monitor.Read();
+            Assert(!immediate.BoostMode.HasValue && !immediate.MaximumFrequencyMhz.HasValue, "failed immediate refresh never shows the previous mode settings");
+            VerifyConfigurationFeedback();
             return count;
+        }
+        private static void VerifyConfigurationFeedback()
+        {
+            var engine = new Engine(); var fan = new FakeFan(); var control = new FanController(fan);
+            var sample = new Snapshot { CpuTemperature = 60, Timestamp = DateTime.UtcNow };
+            var curve = FanPolicy.Preset(FanMode.Balanced);
+            Assert(engine.ConfigurationRevision == 0 && engine.ConfirmedConfigurationRevision == -1, "new engine has no confirmed fan configuration");
+            engine.Configure(FanMode.Balanced, 0, curve); int first = engine.ConfigurationRevision;
+            Assert(first == 1 && engine.ConfirmedConfigurationRevision == -1, "queued configuration is not reported as applied");
+            control.Tick(FanMode.Balanced, 0, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Balanced, first, control);
+            Assert(engine.ConfirmedConfigurationRevision == first, "verified manual register acknowledges the requested fan strategy");
+            var confirmation = engine.ReadFanConfirmation();
+            Assert(confirmation.Revision == first && confirmation.Mode == FanMode.Balanced && confirmation.Level == control.ActualLevel &&
+                confirmation.Ready && confirmation.Confirmed && confirmation.Status == control.Status, "fan acknowledgement and readback form one coherent snapshot");
+            confirmation.Level = 7;
+            Assert(engine.ReadFanConfirmation().Level == control.ActualLevel, "editing a returned confirmation cannot change engine state");
+            engine.Configure(FanMode.Cool, 0, curve); int next = engine.ConfigurationRevision;
+            confirmation = engine.ReadFanConfirmation();
+            Assert(confirmation.Mode == FanMode.Cool && confirmation.Revision == -1 && !confirmation.Confirmed, "new mode immediately clears the old acknowledgement in its snapshot");
+            engine.UpdateConfigurationConfirmation(FanMode.Balanced, first, control);
+            Assert(engine.ConfirmedConfigurationRevision == -1, "an old fan iteration cannot acknowledge a newer request");
+            control.ConfigurationChanged(); control.Tick(FanMode.Cool, 0, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Cool, next, control);
+            Assert(engine.ConfirmedConfigurationRevision == next, "latest configured strategy is confirmed independently");
+            fan.FailRead = true; sample.Timestamp = sample.Timestamp.AddSeconds(5);
+            control.Tick(FanMode.Cool, 0, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Cool, next, control);
+            Assert(engine.ConfirmedConfigurationRevision == -1, "a failed telemetry iteration clears an earlier success for the same revision");
+            confirmation = engine.ReadFanConfirmation();
+            Assert(confirmation.Revision == -1 && !confirmation.Confirmed && !confirmation.Level.HasValue && !engine.FanRpm.HasValue,
+                "failed read withdraws acknowledgement and telemetry together");
+            fan.FailRead = false; sample.Timestamp = sample.Timestamp.AddSeconds(1);
+            control.Tick(FanMode.Cool, 0, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Cool, next, control);
+            Assert(engine.ConfirmedConfigurationRevision == next, "recovered telemetry can confirm the current revision again");
+            engine.Configure(FanMode.Manual, 2, curve); fan.FailWrite = true;
+            control.ConfigurationChanged(); control.Tick(FanMode.Manual, 2, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Manual, engine.ConfigurationRevision, control);
+            Assert(engine.ConfirmedConfigurationRevision == -1, "failed write followed by healthy BIOS recovery is not mode success");
+            fan.FailWrite = false; engine.Configure(FanMode.Custom, 0, curve);
+            control.ConfigurationChanged(); control.Tick(FanMode.Custom, 0, curve, new Snapshot(), sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Custom, engine.ConfigurationRevision, control);
+            Assert(engine.ConfirmedConfigurationRevision == -1, "waiting for temperature cannot acknowledge a custom strategy");
+            engine.Configure(FanMode.Bios, 0, curve);
+            control.ConfigurationChanged(); control.Tick(FanMode.Bios, 0, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Bios, engine.ConfigurationRevision, control);
+            Assert(engine.ConfirmedConfigurationRevision == engine.ConfigurationRevision, "BIOS mode requires automatic register readback");
+            fan.Level = 4; control = new FanController(fan); control.Tick(FanMode.Bios, 0, curve, sample, sample.Timestamp);
+            engine.UpdateConfigurationConfirmation(FanMode.Bios, engine.ConfigurationRevision, control);
+            Assert(engine.ConfirmedConfigurationRevision == -1, "an external manual mode is not confirmed as BIOS automatic");
+            engine.Dispose(); engine.RefreshCpuLimits(); engine.Dispose();
+            Assert(engine.ConfirmedConfigurationRevision == -1, "disposed engine ignores refresh requests and clears acknowledgements");
+            confirmation = engine.ReadFanConfirmation();
+            Assert(!confirmation.Ready && !confirmation.Confirmed && confirmation.Revision == -1 && !confirmation.Level.HasValue,
+                "disposed engine exposes one consistently withdrawn confirmation");
         }
     }
 }

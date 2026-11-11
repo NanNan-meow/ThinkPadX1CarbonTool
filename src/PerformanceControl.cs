@@ -53,15 +53,28 @@ namespace CarbonControl
         }
         public static PowerPlanValues ValuesFor(PerformanceMode mode)
         {
-            if (mode == PerformanceMode.System || !Enum.IsDefined(typeof(PerformanceMode), mode)) throw new ArgumentOutOfRangeException("mode");
-            uint boost = mode == PerformanceMode.LowTemperature ? 0u : mode == PerformanceMode.Performance ? 2u : 1u;
-            return new PowerPlanValues { AcBoost = boost, DcBoost = boost, AcFrequency = 0, DcFrequency = 0 };
+            return PerformanceProfiles.ValuesFor(mode);
         }
         public void RefreshActiveMode()
         {
             if (disposed) throw new ObjectDisposedException("PerformanceController");
             if (session != null && Mode != PerformanceMode.System && !Owned(session).Contains(backend.GetActiveScheme()))
             { Mode = PerformanceMode.System; Status = "使用系统电源设置"; }
+        }
+        public bool IsModeActive(PerformanceMode expected)
+        {
+            if (disposed) throw new ObjectDisposedException("PerformanceController");
+            try
+            {
+                RefreshActiveMode();
+                if (expected != Mode) return false;
+                if (expected == PerformanceMode.System) return true;
+                if (session == null) return false;
+                Guid active = backend.GetActiveScheme();
+                if (!Owned(session).Contains(active)) return false;
+                return backend.Read(active).Same(ValuesFor(expected)) && backend.GetActiveScheme() == active;
+            }
+            catch (Exception ex) { Log.Write(ex); return false; }
         }
         public void Apply(PerformanceMode mode)
         {

@@ -104,7 +104,9 @@ namespace CarbonControl
                 int limitAssertions = CpuLimitsTests.Run();
                 int policyAssertions = CpuPolicyTests.Run();
                 int frameAssertions = WindowFrameTests.Run();
-                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions + startupAssertions + performanceAssertions + deviceAssertions + limitAssertions + policyAssertions + frameAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + "), startup policy (" + startupAssertions + "), power modes (" + performanceAssertions + "), battery/storage (" + deviceAssertions + "), CPU limits (" + limitAssertions + "), current CPU policy (" + policyAssertions + "), window frame themes (" + frameAssertions + ").\r\n"); return 0;
+                int profileAssertions = PerformanceProfilesTests.Run();
+                int feedbackAssertions = ActionFeedbackTests.Run();
+                File.WriteAllText(output, "PASS: " + (count + curveAssertions + slotAssertions + pollingAssertions + loadingAssertions + startupAssertions + performanceAssertions + deviceAssertions + limitAssertions + policyAssertions + frameAssertions + profileAssertions + feedbackAssertions) + " assertions. Fan policy, sensor mapping, failure recovery, settings, curve editing (" + curveAssertions + "), curve slots (" + slotAssertions + "), EC polling/protocol (" + pollingAssertions + "), component loading (" + loadingAssertions + "), startup policy (" + startupAssertions + "), power modes (" + performanceAssertions + "), battery/storage (" + deviceAssertions + "), CPU limits (" + limitAssertions + "), current CPU policy (" + policyAssertions + "), window frame themes (" + frameAssertions + "), profile definitions (" + profileAssertions + "), action feedback (" + feedbackAssertions + ").\r\n"); return 0;
             }
             catch (Exception ex) { File.WriteAllText(output, ex.ToString()); return 1; }
         }

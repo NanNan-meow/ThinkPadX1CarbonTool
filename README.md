@@ -2,13 +2,13 @@
 
 面向 **ThinkPad X1 Carbon Gen 8 / i5-10210U、i5-10310U** 的 Windows 温度监测与风扇管理工具。原生 WPF 界面，支持 Windows 10/11 x64、.NET Framework 4.8。
 
-[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.2.md)
+[下载最新版本](https://github.com/NanNan-meow/ThinkPadX1CarbonTool/releases/latest) · [查看更新记录](docs/RELEASE-v1.4.3.md)
 
 ![监控总览，截图为示例数据](docs/images/monitor-dark.png)
 
 ## 使用
 
-1. 从 Releases 下载 `CarbonControl-v1.4.2-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
+1. 从 Releases 下载 `CarbonControl-v1.4.3-win-x64.zip`，解压整个目录，打开 `CarbonControl.exe`。
 2. 首次进入 **设置 → 配置硬件组件**，安装 LibreHardwareMonitor 0.9.6 与 PawnIO 2.2.0 官方组件。下载文件会校验 SHA-256。
 3. 组件检查通过后，应用会自动重启并返回设置页，加载最新的硬件组件和配置；也可点击 **管理员模式** 启动。
 4. 进入 **风扇策略**，选择预设，或直接拖动曲线节点后点击 **保存并应用**。
@@ -28,7 +28,8 @@ Release 包提供主程序和组件配置入口，硬件组件在首次配置时
 - 系统自动、安静、均衡、强冷、自定义曲线和手动 0–7 档。
 - 拖动节点绘制曲线，支持 2–12 个节点、点击添加、右键删除、数值编辑与撤销/重做。
 - 三个可命名曲线存档，支持保存、覆盖、载入及直接应用。
-- **全速 · 7 档**快捷按钮，再次点击返回原策略或原手动档位；监控页、风扇页与托盘均可操作。
+- **全速 · 7 档**快捷按钮，再次点击返回原策略或原手动档位；风扇页与托盘均可操作。
+- 监控页只读，模式选择和详细设置位于独立「性能模式」页，操作后显示保存／应用／读回结果。
 - 单例运行、托盘驻留、开机登录启动、Dark / Light / 跟随系统。
 - 打开应用并连接成功后自动应用所选风扇策略，支持预设与三个命名存档，默认均衡。
 - 导出硬件检测报告。
@@ -45,7 +46,7 @@ SSD 页面每 10 秒更新，显示各设备温度、寿命剩余估计、累计
 
 ![电池监控，截图为示例数据](docs/images/battery-dark.png)
 
-总览上的四个按钮同时选择电源模式和风扇策略：
+「性能模式」页的四个按钮同时选择电源模式和风扇策略，展开「模式设置」可查看接电／电池数值和曲线节点：
 
 | 模式 | 处理器睿频 | 风扇策略 |
 | --- | --- | --- |
@@ -55,6 +56,10 @@ SSD 页面每 10 秒更新，显示各设备温度、寿命剩余估计、累计
 | 性能 | 请求积极睿频 | 强冷曲线 |
 
 电源设置分别应用到接电和电池状态，使用从当前方案复制的独立方案，读回确认后切换。实际频率由处理器和固件调节。风扇连接成功后应用联动曲线，之后仍可手动切换风扇策略。切回系统或正常退出时恢复原方案；异常退出会在下次启动时恢复，期间在 Windows 中手动选择的其他方案会继续保留。
+
+三个预设的 Windows 睿频值分别为 0、1、2；频率上限都为 0 MHz，即系统调节。PL1、PL2 和时间窗口沿用硬件设置，所以它们可能保持相同。切换模式会立即清除读取缓存并刷新当前策略，读回结果带有时间。风扇与模式反馈等实际确认后显示成功。
+
+![模式设置，截图为示例数据](docs/images/performance-details-dark.png)
 
 ![SSD 监控，截图为示例数据](docs/images/storage-dark.png)
 
@@ -95,20 +100,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test -Preview
 输出为 `dist\CarbonControl-v1.4\CarbonControl.exe`。测试报告为 `test-results.txt` 和 `ui-test-results.txt`，示例界面截图位于 `previews`。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.3
 ```
 
 发布包及 SHA-256 校验文件输出到 `release`。GitHub Actions 在推送 `v*` 标签时构建、运行测试并创建 Release。
 
 新版正式 Release 的程序包与校验文件验证成功后，会自动删除更早的正式 Release，下载页保留最新版本。
 
-744 项逻辑断言及界面交互检查覆盖组件加载、启动策略、风扇通信、电池与 SSD 字段映射、电源模式应用与恢复、CPU 限制读取和窗口边框主题。协议和电源切换测试使用模拟后端，截图使用示例数据。
+829 项逻辑断言及界面交互检查覆盖组件加载、启动策略、风扇通信、电池与 SSD 字段映射、电源模式应用与恢复、CPU 即时刷新、模式定义、操作确认反馈和窗口主题。协议和电源切换测试使用模拟后端，截图使用示例数据。
 
 实机测试：先退出托盘程序，再右键以管理员身份运行包内的 `TestHardware.cmd`。测试读取电池和 SSD，切换电源模式，在相同 CPU 负载下比较硬件频率，并检查风扇档位与 RPM 变化。测试会恢复原设置，报告位于 `reports`；未取得实测证据的项目单独标记。源码目录可运行 `实机测试.cmd`。
 
 [查看本机实测结果](docs/HARDWARE-VALIDATION.md)：低温与性能模式已观察到频率和功耗变化，风扇升速、SSD 读数及原设置恢复均已验证。
 
-只读检测可右键以管理员身份运行包内 `ReadHardware.cmd`；源码目录对应 `读取CPU限制.cmd`。Windows 10 的失焦标题栏已分别验证深色和浅色绘制。
+只读检测可右键以管理员身份运行包内 `ReadHardware.cmd`；源码目录对应 `读取CPU限制.cmd`。Windows 10 的自绘标题栏已通过 56 项原生检查，激活和失焦的深浅色一致。
 
 源码位于 `src`，构建脚本为 `build.ps1`，硬件配置脚本为 `scripts/setup-hardware.ps1`。
 

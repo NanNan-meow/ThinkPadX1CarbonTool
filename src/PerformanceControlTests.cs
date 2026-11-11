@@ -19,17 +19,22 @@ namespace CarbonControl
             public readonly Guid Original = Guid.NewGuid();
             public Guid Active;
             public int Duplicates, Writes, Activations;
-            public bool Unsupported, FailWrite, IgnoreWrite, FailActivate, IgnoreActivate, FailRestore, FailDelete;
+            public bool Unsupported, FailWrite, IgnoreWrite, FailActivate, IgnoreActivate, FailRestore, FailDelete, FailGetActive;
             public Guid? SwitchExternallyOnWrite;
-            public Action<Guid> OnActivate;
+            public Action<Guid> OnActivate, OnRead;
             public FakePower()
             {
                 Active = Original;
                 Plans.Add(Original, new PowerPlanValues { AcBoost = 4, DcBoost = 3, AcFrequency = 3300, DcFrequency = 2000 });
             }
-            public Guid GetActiveScheme() { return Active; }
+            public Guid GetActiveScheme() { if (FailGetActive) throw new IOException("active plan unavailable"); return Active; }
             public PowerPlanValues Read(Guid scheme)
-            { if (Unsupported) throw new IOException("unsupported setting"); return Plans[scheme].Clone(); }
+            {
+                if (Unsupported) throw new IOException("unsupported setting");
+                var values = Plans[scheme].Clone();
+                if (OnRead != null) OnRead(scheme);
+                return values;
+            }
             public Guid Duplicate(Guid source)
             { Duplicates++; var id = Guid.NewGuid(); Plans.Add(id, Plans[source].Clone()); return id; }
             public void Write(Guid scheme, PowerPlanValues values)
@@ -57,6 +62,12 @@ namespace CarbonControl
             { var id = Guid.NewGuid(); Plans[id] = new PowerPlanValues { AcBoost = 1, DcBoost = 0 }; return id; }
         }
         private static string PathFor(string root, string name) { return Path.Combine(root, name + ".xml"); }
+        private static string ReadOnlyState(FakePower fake, string path)
+        {
+            string plans = string.Join(";", fake.Plans.OrderBy(x => x.Key).Select(x => x.Key + ":" + x.Value.AcBoost + "," + x.Value.DcBoost + "," + x.Value.AcFrequency + "," + x.Value.DcFrequency));
+            return fake.Active + "|" + plans + "|" + fake.Writes + "," + fake.Activations + "," + fake.Duplicates + "|" +
+                string.Join(",", fake.Deleted) + "|" + (File.Exists(path) ? File.ReadAllText(path) : "no journal");
+        }
         public static int Run(string directory)
         {
             count = 0;
@@ -157,6 +168,44 @@ namespace CarbonControl
                 fake.Duplicates == duplicatesBeforeRefresh && fake.Plans.Keys.OrderBy(x => x).SequenceEqual(plansBeforeRefresh) && File.Exists(path),
                 "refresh does not activate, modify or clean any power plan");
             c.Dispose();
+
+            fake = new FakePower(); path = PathFor(folder, "mode-active-confirmation"); c = new PerformanceController(fake, path);
+            string beforeConfirmation = ReadOnlyState(fake, path);
+            Assert(c.IsModeActive(PerformanceMode.System) && !c.IsModeActive(PerformanceMode.Performance), "system means Windows management rather than a fixed profile");
+            Assert(ReadOnlyState(fake, path) == beforeConfirmation, "checking an idle controller never creates or modifies a power plan");
+            c.Apply(PerformanceMode.LowTemperature); Guid confirmedPlan = fake.Active;
+            beforeConfirmation = ReadOnlyState(fake, path);
+            Assert(c.IsModeActive(PerformanceMode.LowTemperature), "owned active scheme and matching values confirm the expected mode");
+            Assert(!c.IsModeActive(PerformanceMode.Performance) && !c.IsModeActive(PerformanceMode.System), "a different expected mode is not reported as active");
+            Assert(ReadOnlyState(fake, path) == beforeConfirmation, "successful validation does not write activate duplicate delete or alter the journal");
+            fake.Plans[confirmedPlan].DcBoost = 2;
+            beforeConfirmation = ReadOnlyState(fake, path);
+            Assert(!c.IsModeActive(PerformanceMode.LowTemperature) && c.Mode == PerformanceMode.LowTemperature, "external value edits inside an owned plan fail confirmation without changing the selected mode");
+            Assert(ReadOnlyState(fake, path) == beforeConfirmation, "mismatch validation leaves external edits and recovery information intact");
+            fake.Plans[confirmedPlan].DcBoost = 0; fake.Unsupported = true;
+            beforeConfirmation = ReadOnlyState(fake, path);
+            Assert(!c.IsModeActive(PerformanceMode.LowTemperature), "unreadable values cannot confirm a mode");
+            Assert(ReadOnlyState(fake, path) == beforeConfirmation, "failed value reads do not modify power state");
+            fake.Unsupported = false; fake.FailGetActive = true;
+            beforeConfirmation = ReadOnlyState(fake, path);
+            Assert(!c.IsModeActive(PerformanceMode.LowTemperature), "unreadable active scheme cannot confirm a mode");
+            Assert(ReadOnlyState(fake, path) == beforeConfirmation, "failed active-scheme reads do not modify power state");
+            fake.FailGetActive = false;
+            external = fake.External(); fake.Active = external;
+            beforeConfirmation = ReadOnlyState(fake, path);
+            Assert(!c.IsModeActive(PerformanceMode.LowTemperature) && c.Mode == PerformanceMode.System && c.IsModeActive(PerformanceMode.System), "external scheme selection invalidates application mode and returns Windows management");
+            Assert(ReadOnlyState(fake, path) == beforeConfirmation, "external-selection validation does not clean up or replace any plan");
+            c.Dispose();
+
+            fake = new FakePower(); path = PathFor(folder, "mode-active-race"); c = new PerformanceController(fake, path);
+            c.Apply(PerformanceMode.Performance); confirmedPlan = fake.Active; external = fake.External();
+            int writesBeforeConfirmation = fake.Writes, activationsBeforeConfirmation = fake.Activations, duplicatesBeforeConfirmation = fake.Duplicates;
+            string journalBeforeConfirmation = File.ReadAllText(path);
+            fake.OnRead = id => { if (id == confirmedPlan) fake.Active = external; };
+            Assert(!c.IsModeActive(PerformanceMode.Performance), "scheme change during readback cannot acknowledge the previous profile");
+            Assert(fake.Active == external && fake.Writes == writesBeforeConfirmation && fake.Activations == activationsBeforeConfirmation &&
+                fake.Duplicates == duplicatesBeforeConfirmation && File.ReadAllText(path) == journalBeforeConfirmation, "race validation preserves the external selection without writes or journal changes");
+            fake.OnRead = null; c.Dispose();
 
             fake = new FakePower(); path = PathFor(folder, "external-new-profile"); c = new PerformanceController(fake, path);
             c.Apply(PerformanceMode.Balanced); external = fake.External(); fake.Active = external;
