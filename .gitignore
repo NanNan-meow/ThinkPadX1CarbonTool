@@ -15,3 +15,4 @@ release/
 slot-test-*.xml
 *.tmp
 hardware-components-check.txt
+reports/

@@ -17,7 +17,7 @@ namespace CarbonControl
             string path = Path.GetFullPath(Path.Combine(applicationDirectory, "hardware", "LibreHardwareMonitorLib.dll"));
             // Missing LoadFrom requests can remain cached by the CLR for this process.
             // Check the file first, including on the fan-control path before installation.
-            if (!File.Exists(path)) throw new FileNotFoundException("硬件组件尚未安装，请点击「配置硬件组件」。", path);
+            if (!File.Exists(path)) throw new FileNotFoundException("硬件组件未安装", path);
             return Assembly.LoadFrom(path);
         }
     }

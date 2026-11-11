@@ -105,14 +105,14 @@ namespace CarbonControl
             T("BatteryTemperature", Format(battery == null ? null : battery.Temperature, "0.0", "°C"));
             T("BatteryRuntime", battery == null || !SensorMap.Valid(battery.RemainingMinutes) ? "—" :
                 ((int)battery.RemainingMinutes.Value / 60) + " 小时 " + ((int)battery.RemainingMinutes.Value % 60) + " 分钟");
-            T("BatteryStatus", battery == null ? "连接硬件组件后显示电池信息。" : "健康度 = 当前满充容量 / 设计容量；功率来自电池端。" );
+            T("BatteryStatus", battery == null ? "等待电池数据" : "每 2 秒刷新 · 电池端功率" );
             batteryPowerHistory.Add(signedPower); if (batteryPowerHistory.Count > 60) batteryPowerHistory.RemoveAt(0); DrawBatteryPower();
             PresentStorage(sample.Drives);
         }
         private void PresentStorage(IList<StorageReading> drives)
         {
             string signature = string.Join(";", drives.Select(d => string.Join("|", new object[] { d.Id, d.Name, d.Temperature, d.HealthPercent, d.UsedLifePercent, d.TotalWrittenGB, d.TotalReadGB, d.UsedSpacePercent, d.HasWarning, d.Status })));
-            T("StorageStatus", drives.Count == 0 ? "正在读取存储设备；部分字段取决于硬盘提供的数据。" : drives.Count + " 个存储设备 · 每 10 秒刷新");
+            T("StorageStatus", drives.Count == 0 ? "等待 SSD 数据" : drives.Count + " 个存储设备 · 每 10 秒刷新");
             if (storageSignature == signature) return;
             storageSignature = signature; var cards = C<StackPanel>("StorageCards"); cards.Children.Clear();
             foreach (var drive in drives)

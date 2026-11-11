@@ -152,7 +152,7 @@ namespace CarbonControl
                 int index = (int)selected - (int)StartupFanPolicy.Slot1;
                 var slots = settings.CurveSlots;
                 if (slots == null || index >= slots.Length || slots[index] == null || !slots[index].HasCurve)
-                    throw new InvalidOperationException("启动策略的曲线存档尚未保存，请先保存曲线或选择其他策略。");
+                    throw new InvalidOperationException("启动策略使用的存档没有曲线");
                 FanPolicy.Validate(slots[index].Curve);
                 curve = Clone(slots[index].Curve);
                 return FanMode.Custom;

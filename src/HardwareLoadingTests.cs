@@ -52,7 +52,7 @@ namespace CarbonControl
             {
                 missing = true;
                 Assert(ex.FileName == Path.GetFullPath(installedLibrary), "missing component reports the full filesystem path");
-                Assert(ex.Message.Contains("配置硬件组件"), "missing component has an actionable status");
+                Assert(ex.Message.Contains("未安装"), "missing component has a concise status");
             }
             Assert(missing, "pre-install call is rejected before a CLR bind");
             Assert(!Directory.Exists(Path.GetDirectoryName(installedLibrary)), "checking components does not create installation folders");

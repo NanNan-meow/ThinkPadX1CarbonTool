@@ -33,8 +33,10 @@ namespace CarbonControl
                 return File.Exists(file) ? Assembly.LoadFrom(file) : null;
             };
             if (args.Length == 3 && args[0] == "--watchdog") { Watchdog.Run(int.Parse(args[1]), args[2]); return 0; }
+            if (args.Length == 4 && args[0] == "--power-watchdog") { PhysicalVerification.WatchPower(int.Parse(args[1]), args[2], args[3]); return 0; }
             if (args.Length > 0 && args[0] == "--self-test") return Tests.Run(args.Length > 1 ? args[1] : "test-results.txt");
             if (args.Length == 2 && args[0] == "--diagnose") return Diagnostics.Write(args[1]);
+            if (args.Length == 2 && args[0] == "--physical-test") return PhysicalVerification.Run(args[1]);
             if (args.Length == 2 && args[0] == "--check-components") return Diagnostics.CheckComponents(args[1]);
             if (args.Length == 2 && args[0] == "--ui-test")
             {
@@ -114,7 +116,7 @@ namespace CarbonControl
                 if (updating || preview) return;
                 bool enabled = C<CheckBox>("StartupCheck").IsChecked == true;
                 try { await Task.Run(() => StartupTask.Set(enabled)); T("SettingsMessage", enabled ? "已设置开机启动" : "已关闭开机启动"); }
-                catch (Exception ex) { Log.Write(ex); T("SettingsMessage", "请在管理员模式下设置开机启动"); }
+                catch (Exception ex) { Log.Write(ex); T("SettingsMessage", "开机启动未设置 · 需要管理员权限"); }
                 updating = true; C<CheckBox>("StartupCheck").IsChecked = StartupTask.IsEnabled(); updating = false;
             };
             C<Canvas>("HistoryChart").SizeChanged += (s, e) => DrawHistory();
@@ -143,7 +145,7 @@ namespace CarbonControl
             Click("BoostFan", () => SetFullSpeed());
             Click("QuickFullSpeed", ToggleFullSpeed); Click("OverviewFullSpeed", ToggleFullSpeed);
             Click("SaveCurve", ApplyDraft);
-            Click("ResetCurve", () => { LoadCurve(FanPolicy.Preset(FanMode.Balanced)); T("CurveMessage", "已载入均衡曲线，可直接拖动修改。"); });
+            Click("ResetCurve", () => { LoadCurve(FanPolicy.Preset(FanMode.Balanced)); T("CurveMessage", "已载入均衡曲线"); });
             Click("UndoCurve", () => curveDraft.Undo()); Click("RedoCurve", () => curveDraft.Redo());
             Click("DeleteCurvePoint", () => curveDraft.DeleteSelected());
             Click("AddCurvePoint", AddCurvePoint);
@@ -160,20 +162,20 @@ namespace CarbonControl
             {
                 if (changingStartupPolicy || C<ComboBox>("StartupPolicyPicker").SelectedIndex < 0) return;
                 settings.StartupPolicy = (StartupFanPolicy)C<ComboBox>("StartupPolicyPicker").SelectedIndex; Save();
-                T("SettingsMessage", "启动策略已保存，下次打开并连接成功后自动应用。");
+                T("SettingsMessage", "启动策略已保存");
             };
             foreach (string theme in new[] { "System", "Light", "Dark" })
             { string chosen = theme; Click("Theme" + theme, () => { settings.Theme = chosen; ApplyTheme(); Save(); }); }
             Click("Elevate", () =>
             {
-                if (IsAdmin()) { T("SettingsMessage", "当前已是管理员模式"); return; }
+                if (IsAdmin()) { T("SettingsMessage", "管理员模式已启用"); return; }
                 RestartApplication(true);
             });
-            Click("Reconnect", () => { T("SettingsMessage", "正在重新启动并加载硬件组件…"); RestartApplication(false); });
+            Click("Reconnect", () => { T("SettingsMessage", "正在重启…"); RestartApplication(false); });
             C<Button>("InstallHardware").Click += async (s, e) =>
             {
                 if (preview) return;
-                C<Button>("InstallHardware").IsEnabled = false; T("SettingsMessage", "正在下载硬件组件并启动安装程序…");
+                C<Button>("InstallHardware").IsEnabled = false; T("SettingsMessage", "正在配置硬件组件…");
                 try
                 {
                     string script = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "setup-hardware.ps1");
@@ -183,10 +185,10 @@ namespace CarbonControl
                         await Task.Run(() => process.WaitForExit());
                         if (process.ExitCode == 0)
                         {
-                            T("SettingsMessage", "组件已安装，正在重新启动并加载…");
+                            T("SettingsMessage", "组件已安装 · 正在重启");
                             RestartApplication(!IsAdmin());
                         }
-                        else T("SettingsMessage", "组件配置未完成，查看程序目录 setup-hardware.log");
+                        else T("SettingsMessage", "组件配置未完成 · setup-hardware.log");
                     }
                 }
                 catch (Exception ex) { T("SettingsMessage", ex.Message); Log.Write(ex); }
@@ -197,12 +199,12 @@ namespace CarbonControl
         private static string ExePath { get { return Process.GetCurrentProcess().MainModule.FileName; } }
         private void RestartApplication(bool elevate)
         {
-            if (preview) { T("SettingsMessage", "正在重新启动并加载硬件组件…"); return; }
+            if (preview) { T("SettingsMessage", "正在重启…"); return; }
             string arguments = "--wait-parent " + Process.GetCurrentProcess().Id + " --settings";
             var start = new ProcessStartInfo(ExePath, arguments) { UseShellExecute = true };
             if (elevate) start.Verb = "runas";
             var child = Process.Start(start);
-            if (child == null) throw new IOException("未能重新启动应用，请退出后重新打开。");
+            if (child == null) throw new IOException("应用重启失败");
             child.Dispose(); Exit();
         }
         private static bool IsAdmin() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
@@ -235,7 +237,7 @@ namespace CarbonControl
         private void RestartEngine()
         {
             if (preview) return;
-            if (engine != null) { engine.Dispose(); if (!engine.Stopped) throw new IOException("正在结束上一轮连接，请稍后重试"); }
+            if (engine != null) { engine.Dispose(); if (!engine.Stopped) throw new IOException("正在结束上一轮连接"); }
             engine = new Engine(); engine.Configure(FanMode.Bios, settings.ManualLevel, settings.Curve); engine.Start(); SelectMode(FanMode.Bios, false, false, true);
         }
         private void Show() { window.Dispatcher.Invoke(() => { window.Show(); window.WindowState = WindowState.Normal; window.Activate(); }); }
@@ -246,7 +248,7 @@ namespace CarbonControl
             if (refreshDraft && mode != FanMode.Manual && mode != FanMode.Bios)
                 LoadCurve(mode == FanMode.Custom ? (IList<CurvePoint>)settings.Curve : FanPolicy.Preset(mode));
             if (engine != null && !engine.FanReady && mode != FanMode.Bios)
-            { T("CurveMessage", "曲线可以继续编辑。" + engine.FanStatus); T("SettingsMessage", engine.FanStatus); return false; }
+            { T("CurveMessage", "未应用 · " + engine.FanStatus); T("SettingsMessage", engine.FanStatus); return false; }
             if (engine != null) engine.Configure(mode, settings.ManualLevel, settings.Curve);
             if (!startupRequest) startupPolicyGate.Cancel();
             if (!performanceRequest) pendingPerformanceFan = null;
@@ -255,7 +257,7 @@ namespace CarbonControl
             UpdatePerformanceStatus();
             foreach (FanMode m in new[] { FanMode.Bios, FanMode.Quiet, FanMode.Balanced, FanMode.Cool, FanMode.Custom }) Highlight("Mode" + m, m == mode);
             Highlight("ApplyManual", mode == FanMode.Manual);
-            T("PolicyDescription", fullSpeedRequest ? "全速模式 · 固定 7 档，再点一次返回原策略。" : mode == FanMode.Bios ? "由 ThinkPad 固件自动调节风扇。" : mode == FanMode.Manual ? "保持手动档位，最高档为 7 档。" : "当前策略：" + ModeLabels[(int)mode] + " · 根据 CPU 温度自动调整档位。");
+            T("PolicyDescription", fullSpeedRequest ? "固定 7 档 · 再次点击返回" : mode == FanMode.Bios ? "系统自动调速" : mode == FanMode.Manual ? "手动档位" : ModeLabels[(int)mode] + " · 按 CPU 温度调速");
             return true;
         }
         private void ToggleFullSpeed()
@@ -286,7 +288,7 @@ namespace CarbonControl
             var points = curveDraft.Points; FanPolicy.Validate(points);
             settings.Curve = points.ToArray(); Save(); curveDraft.MarkSaved();
             bool applied = SelectMode(FanMode.Custom, false);
-            T("CurveMessage", applied ? "自定义曲线已保存并应用。" : "自定义曲线已保存，连接风扇后可应用。");
+            T("CurveMessage", applied ? "曲线已保存并应用" : "曲线已保存 · 等待风扇连接");
         }
         private void RefreshCurveSlots()
         {
@@ -342,13 +344,13 @@ namespace CarbonControl
             int index = settings.SelectedCurveSlot;
             settings.SaveCurveSlot(index, C<TextBox>("CurveSlotName").Text, curveDraft.Points);
             Save(); curveDraft.MarkSaved(); RefreshCurveSlots();
-            T("CurveMessage", "已保存到「" + settings.CurveSlots[index].Name + "」，下次打开仍可载入。");
+            T("CurveMessage", "已保存到「" + settings.CurveSlots[index].Name + "」");
         }
         private bool LoadCurveSlotCore()
         {
             int index = settings.SelectedCurveSlot;
             LoadCurve(settings.LoadCurveSlot(index));
-            T("CurveMessage", "已载入「" + settings.CurveSlots[index].Name + "」，可编辑或应用。");
+            T("CurveMessage", "已载入「" + settings.CurveSlots[index].Name + "」");
             return true;
         }
         private void LoadCurveSlot() { LoadCurveSlotCore(); }
@@ -360,7 +362,7 @@ namespace CarbonControl
             RefreshPerformanceMode();
             TryApplyStartupPolicy(sample, engine.FanReady, engine.FanConfirmed, DateTime.UtcNow);
             TryApplyPerformanceFan(sample, engine.FanReady, engine.FanConfirmed, DateTime.UtcNow);
-            Present(fresh ? sample : new Snapshot { Status = "正在重新获取传感器数据" });
+            Present(fresh ? sample : new Snapshot { Status = "正在读取传感器" });
             PresentDevices(fresh ? sample : new Snapshot());
             curveChart.CurrentTemperature = fresh ? sample.CpuTemperature : null;
             history.Add(fresh ? sample.CpuTemperature : null); if (history.Count > 60) history.RemoveAt(0);
@@ -369,7 +371,7 @@ namespace CarbonControl
             T("FanSummary", "风扇  " + rpm + " RPM"); T("FanActual", rpm + " RPM"); T("FanSummaryMode", engine.FanStatus);
             T("FanControlStatus", engine.FanStatus);
             UpdatePerformanceStatus();
-            T("ConnectionLabel", fresh ? sample.Status : "传感器数据已暂停"); T("HardwareStatus", sample.Status + "\n" + engine.FanStatus);
+            T("ConnectionLabel", fresh ? sample.Status : "等待传感器数据"); T("HardwareStatus", sample.Status + "\n" + engine.FanStatus);
             T("TimeLabel", DateTime.Now.ToString("HH:mm:ss"));
             if (tray != null) tray.Text = "Carbon Control · " + Format(fresh ? sample.CpuTemperature : null, "0", "°C") + " · " + rpm + " RPM";
             if (++tickCount % 3 == 0) ApplyTheme();
@@ -385,7 +387,7 @@ namespace CarbonControl
             activePage = page;
             foreach (string p in new[] { "Monitor", "Fan", "Battery", "Storage", "Settings" }) { C<StackPanel>(p + "Page").Visibility = p == page ? Visibility.Visible : Visibility.Collapsed; Highlight("Nav" + p, p == page); }
             T("PageTitle", page == "Monitor" ? "监控总览" : page == "Fan" ? "风扇策略" : page == "Battery" ? "电池" : page == "Storage" ? "SSD" : "设置");
-            T("PageSubtitle", page == "Monitor" ? "掌握温度，让性能从容发挥。" : page == "Fan" ? "从安静办公到持续高负载，由你掌控。" : page == "Battery" ? "关注电池状态，掌握每一瓦的去向。" : page == "Storage" ? "查看温度、寿命估计和累计读写。" : "让 Carbon Control 按你的习惯运行。");
+            T("PageSubtitle", page == "Monitor" ? "CPU、GPU 与风扇实时监控。" : page == "Fan" ? "预设、手动档位与自定义曲线。" : page == "Battery" ? "电量、容量与充放电功率。" : page == "Storage" ? "温度、寿命与累计读写。" : "外观、启动与硬件连接。");
             C<ScrollViewer>("PageScroll").ScrollToTop();
         }
         private void Highlight(string name, bool selected)
@@ -432,13 +434,13 @@ namespace CarbonControl
             C<Button>("UndoCurve").IsEnabled = curveDraft.CanUndo; C<Button>("RedoCurve").IsEnabled = curveDraft.CanRedo;
             C<Button>("AddCurvePoint").IsEnabled = points.Count < 12;
             C<Button>("DeleteCurvePoint").IsEnabled = points.Count > 2 && i >= 0 && i < points.Count - 1;
-            T("CurveMessage", curveDraft.IsDirty ? "曲线已修改，点击「保存并应用」生效。" : "选中节点后，也可以输入数值精确调整。");
+            T("CurveMessage", curveDraft.IsDirty ? "曲线已修改 · 保存并应用后生效" : "选中节点可输入数值调整");
         }
         private bool CommitCurvePoint()
         {
             int t, l;
             if (!int.TryParse(C<TextBox>("SelectedTemperature").Text, out t) || !int.TryParse(C<TextBox>("SelectedLevel").Text, out l))
-            { T("CurveMessage", "请输入整数温度和档位。"); return false; }
+            { T("CurveMessage", "温度和档位需为整数"); return false; }
             curveDraft.MoveSelected(t, l); UpdateCurveEditor(); return true;
         }
         private void AddCurvePoint()
@@ -586,7 +588,7 @@ namespace CarbonControl
             press("NavSettings"); root.Measure(new Size(960, 700)); root.Arrange(new Rect(0, 0, 960, 700)); root.UpdateLayout();
             TestDeviceUi(root, press);
             press("Reconnect");
-            if (!C<TextBlock>("SettingsMessage").Text.Contains("重新启动") || C<TextBlock>("SettingsMessage").Text.Contains("已重新连接")) throw new Exception("Reconnect does not claim unverified success");
+            if (C<TextBlock>("SettingsMessage").Text != "正在重启…") throw new Exception("Reconnect progress status");
             File.WriteAllText(output, "PASS: automatic startup waits for verified connection, default/custom-slot startup, manual override, saved startup preference, named slots, full-speed shortcuts/return, themed scroll bar, curve editing, reconnect status, battery/SSD pages, performance and fan linkage, minimum-size layout.\r\n");
         }
         private static TVisual FindVisual<TVisual>(DependencyObject parent) where TVisual : DependencyObject

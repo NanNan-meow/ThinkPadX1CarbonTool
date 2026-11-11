@@ -74,7 +74,7 @@ namespace CarbonControl
             {
                 // The user selected another plan outside this app. Start from that choice.
                 CleanupInactive(session, previousActive); SaveOrClearSession();
-                if (session != null) throw new IOException("旧电源方案尚未清理，请先恢复系统模式。");
+                if (session != null) throw new IOException("临时电源方案清理未完成");
                 Mode = PerformanceMode.System;
             }
             PowerPlanValues desired = ValuesFor(mode);

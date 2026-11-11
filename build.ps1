@@ -23,6 +23,7 @@ $sources = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter '*
 & $compiler /nologo /target:winexe /platform:x64 /optimize+ /utf8output /codepage:65001 /langversion:5 "/out:$out\CarbonControl.exe" /win32manifest:src/app.manifest /win32icon:assets/carbon.ico /resource:src/MainWindow.xaml,MainWindow.xaml /resource:assets/carbon.ico,carbon.ico $references $sources
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }
 Copy-Item -LiteralPath '.\scripts\setup-hardware.ps1' -Destination $out
+Copy-Item -LiteralPath '.\scripts\test-hardware.ps1' -Destination $out
 $appConfig = Join-Path $out 'CarbonControl.exe.config'
 if (-not (Test-Path -LiteralPath $appConfig)) {
     $previousConfig = Join-Path $previousApp 'CarbonControl.exe.config'

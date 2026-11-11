@@ -212,7 +212,7 @@ namespace CarbonControl
             // Validate components before opening the driver or attempting a CLR bind.
             var assembly = HardwareComponents.LoadLibrary();
             handle = CreateFile(@"\\?\GLOBALROOT\Device\PawnIO", 3, 3, IntPtr.Zero, 3, 128, IntPtr.Zero);
-            if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "请先配置硬件组件并切换到管理员模式"); }
+            if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "风扇接口未连接"); }
             try
             {
                 string resource = assembly.GetManifestResourceNames().Single(n => n.EndsWith("LpcACPIEC.bin", StringComparison.OrdinalIgnoreCase));
@@ -260,7 +260,7 @@ namespace CarbonControl
         private bool compatibilityReadLogged;
         public ThinkPadFan()
         {
-            if (!Machine.Supported) throw new InvalidOperationException("风扇控制适配 X1 Carbon Gen 8 · i5-10210U / i5-10310U");
+            if (!Machine.Supported) throw new InvalidOperationException("机型未匹配");
             mutex = new Mutex(false, @"Global\Access_EC");
             try { port = new PawnPort(); } catch { mutex.Dispose(); throw; }
         }

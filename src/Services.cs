@@ -74,7 +74,7 @@ namespace CarbonControl
             {
                 if (restorePending)
                 {
-                    if (now < nextRetry && !changed) { Status = "正在恢复系统自动"; return; }
+                    if (now < nextRetry && !changed) { Status = "切换系统自动中"; return; }
                     restoring = true; Restore(); restoring = false; restorePending = false;
                 }
                 if (requested == 128)
@@ -84,7 +84,7 @@ namespace CarbonControl
                 else if (!OwnsFan || confirmedLevel != requested || now >= nextRefresh)
                 {
                     if (now < nextRetry && !changed)
-                    { Status = "系统自动 · 正在重连"; Healthy = !OwnsFan; return; }
+                    { Status = "系统自动 · 重连中"; Healthy = !OwnsFan; return; }
                     Apply(requested, now);
                 }
                 if (now >= nextTelemetry)
@@ -109,7 +109,7 @@ namespace CarbonControl
                         {
                             Rpm = null; ActualLevel = null; restoring = true; Restore(); restoring = false;
                             nextRetry = now.AddSeconds(2); nextTelemetry = now.AddSeconds(TelemetryIntervalSeconds);
-                            Status = "系统自动 · 正在重连"; Healthy = true;
+                            Status = "系统自动 · 重连中"; Healthy = true;
                         }
                         return;
                     }
@@ -118,8 +118,8 @@ namespace CarbonControl
                 }
                 if (telemetryFailures != 0) { Status = "转速刷新中"; return; }
                 Status = requested == 128 ? "系统自动" : "已应用 · " + requested + " 档";
-                if (mode != FanMode.Bios && requested == 128) Status = "系统自动 · 等待温度数据";
-                if (requested == 7 && sample.CpuTemperature >= 92) Status = "温度调节 · 7 档";
+                if (mode != FanMode.Bios && requested == 128) Status = "等待温度数据";
+                if (requested == 7 && sample.CpuTemperature >= 92) Status = "已应用 · 7 档";
                 Healthy = true;
             }
             catch (Exception ex)
@@ -128,9 +128,9 @@ namespace CarbonControl
                 confirmedLevel = null; commandFailures++;
                 nextRetry = now.AddSeconds(Math.Min(4, 1 << Math.Min(2, commandFailures - 1)));
                 nextTelemetry = nextRetry;
-                if (restoring) { restorePending = true; Status = "风扇连接中断 · 正在恢复自动"; return; }
-                try { Restore(); Status = "系统自动 · 正在重连"; Healthy = true; }
-                catch (Exception restoreError) { restorePending = true; Log.Write(restoreError); Status = "风扇连接中断 · 正在恢复自动"; }
+                if (restoring) { restorePending = true; Status = "风扇连接中断"; return; }
+                try { Restore(); Status = "系统自动 · 重连中"; Healthy = true; }
+                catch (Exception restoreError) { restorePending = true; Log.Write(restoreError); Status = "风扇连接中断"; }
             }
         }
         private void Apply(int requested, DateTime now)
@@ -161,7 +161,7 @@ namespace CarbonControl
         private List<CurvePoint> curve = FanPolicy.Preset(FanMode.Balanced);
         private bool suspended;
         private int configurationRevision;
-        public string FanStatus = "正在连接风扇";
+        public string FanStatus = "风扇连接中";
         public int? FanRpm, FanLevel;
         public bool FanReady;
         public bool FanConfirmed;
@@ -245,11 +245,11 @@ namespace CarbonControl
             try
             {
                 child = Process.Start(new ProcessStartInfo(p.MainModule.FileName, "--watchdog " + p.Id + " " + token) { UseShellExecute = false, CreateNoWindow = true });
-                if (!ready.WaitOne(4000)) throw new IOException("风扇守护进程未就绪");
+                if (!ready.WaitOne(4000)) throw new IOException("风扇控制连接未就绪");
             }
             catch { Close(true); throw; }
         }
-        public void Pulse() { if (child == null || child.HasExited) throw new IOException("风扇守护进程已退出，恢复系统自动"); pulse.Set(); }
+        public void Pulse() { if (child == null || child.HasExited) throw new IOException("风扇控制连接中断"); pulse.Set(); }
         public void Close(bool restored) { if (restored) done.Set(); pulse.Dispose(); done.Dispose(); ready.Dispose(); if (child != null) child.Dispose(); }
         public static void Run(int parentId, string token)
         {
